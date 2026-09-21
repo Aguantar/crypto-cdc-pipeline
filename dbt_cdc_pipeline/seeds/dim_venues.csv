@@ -1,0 +1,4 @@
+venue,quote_currency,timezone_of_day,trade_side_semantics,side_field,data_path,ledger_of_record,reconcile_truth,notes
+upbit,KRW,"Asia/Seoul(리포트)/UTC(대조)","taker",ask_bid,"WS→MySQL→Debezium→Kafka→Flink→ClickHouse",1,"REST 일봉·시간봉 거래량","ask_bid = 테이커 방향(BID 매수 체결)"
+binance,USDT,"UTC","maker_flag",is_buyer_maker,"WS→Kafka→Flink→ClickHouse",0,"REST 1h 캔들 체결 수","is_buyer_maker=true 면 매수자가 메이커 → 테이커는 매도(ASK)"
+binance_testnet,USDT,"UTC","maker_flag",is_maker,"WS-API→MySQL(거울)→Debezium→Kafka→ClickHouse",1,"REST allOrders·myTrades","가상 자금, 월 1회 리셋"
