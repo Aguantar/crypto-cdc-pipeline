@@ -1,0 +1,54 @@
+# CI (2026-09-16 추가, docs/20): 로컬에서 손으로 돌리던 검증을 푸시마다 강제한다.
+# 왜: "실행되지 않는 테스트는 게이트가 아니다". 오늘 DAG 구조 테스트 2개가 실제 DAG 와 어긋난 채 몇 주간 실패 상태였고,
+#     Flink 빌드는 -DskipTests 로 테스트를 건너뛰고 있었다. 둘 다 CI 가 있었으면 즉시 드러났다.
+# 범위: (1) Flink 단위 테스트(늦은 이벤트 가드) (2) Airflow DAG 구조 테스트 (3) dbt parse (모델·소스·테스트 정의 무결성).
+#       데이터가 필요한 dbt build/실행 검증은 운영에서(reconcile_trades DAG) 한다 - CI 는 정의만 검사.
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  flink-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '11', cache: maven }
+      - name: mvn test (AnomalyDetector late-event guard)
+        working-directory: flink
+        run: mvn -B -q test
+
+  airflow-dag-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.10' }
+      - name: install airflow 2.8.1 (constraints) + pytest
+        run: |
+          pip install "apache-airflow==2.8.1" --constraint "https://raw.githubusercontent.com/apache/airflow/constraints-2.8.1/constraints-3.10.txt"
+          pip install pytest requests
+      - name: DAG structure tests
+        # DagBag 로딩은 메타 DB 스키마를 요구하므로 파일 sqlite 를 마이그레이션한 뒤 실행 (컨테이너에선 실 DB 가 있어 드러나지 않던 전제)
+        env:
+          AIRFLOW_HOME: ${{ github.workspace }}/airflow
+          AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: sqlite:///${{ runner.temp }}/airflow-ci.db
+          AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+        run: |
+          airflow db migrate -q 2>/dev/null || airflow db migrate
+          python -m pytest airflow/tests/test_dags.py -q
+
+  dbt-parse:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.10' }
+      - name: install dbt-clickhouse 1.7.2
+        # protobuf<5: dbt-core 1.7 은 protobuf 4 API(MessageToJson including_default_value_fields)를 쓴다. 운영 컨테이너와 같은 조합으로 고정
+        run: pip install "dbt-core==1.7.9" "dbt-clickhouse==1.7.2" "protobuf<5"
+      - name: dbt parse (no warehouse connection needed)
+        working-directory: dbt_cdc_pipeline
+        run: dbt parse --profiles-dir . --target dev
