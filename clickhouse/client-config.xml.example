@@ -1,0 +1,6 @@
+<config>
+  <!-- /home/calme/clickhouse-client-config.xml 로 복사해 비밀번호를 채운다 (chmod 600). 컨테이너의 /etc/clickhouse-client/config.xml 에 마운트되어
+       `docker exec cdc-clickhouse clickhouse-client` 가 인증 없이 그대로 동작한다. -->
+  <user>default</user>
+  <password>CHANGE_ME</password>
+</config>

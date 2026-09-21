@@ -1,0 +1,11 @@
+<!-- system.* 로그 테이블 14일 TTL (2026-09-09, 1차 실행 지시서 작업 4-3).
+     적용에는 컨테이너 재시작 + compose에 volume 마운트(./clickhouse/config.d:/etc/clickhouse-server/config.d) 필요 → 보류.
+     ALTER로 이미 동일 TTL을 라이브 적용했으므로, 재시작 시 이 설정과 테이블 정의가 일치해야 ClickHouse가 테이블을 rename하지 않음. -->
+<clickhouse>
+    <query_log><ttl>event_date + INTERVAL 14 DAY DELETE</ttl></query_log>
+    <query_views_log><ttl>event_date + INTERVAL 14 DAY DELETE</ttl></query_views_log>   <!-- 2026-09-20: Kafka 엔진 MV 가 폴링마다 기록, 2월부터 2GB. 재시작 때 적용, 그전엔 DROP PARTITION -->
+    <part_log><ttl>event_date + INTERVAL 14 DAY DELETE</ttl></part_log>
+    <metric_log><ttl>event_date + INTERVAL 14 DAY DELETE</ttl></metric_log>
+    <asynchronous_metric_log><ttl>event_date + INTERVAL 14 DAY DELETE</ttl></asynchronous_metric_log>
+    <trace_log><ttl>event_date + INTERVAL 14 DAY DELETE</ttl></trace_log>
+</clickhouse>

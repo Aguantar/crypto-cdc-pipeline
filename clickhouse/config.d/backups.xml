@@ -1,0 +1,7 @@
+<clickhouse>
+  <!-- 백업 허용 경로 (2026-09-17, docs/21). /backups 는 호스트 ~/clickhouse-backups 바인드 마운트 → rsync 로 Oracle /mnt/backup 로 전송.
+       데이터 볼륨 안에 두지 않는 이유: 호스트에서 docker cp 없이 바로 rsync 하기 위해. -->
+  <backups>
+    <allowed_path>/backups/</allowed_path>
+  </backups>
+</clickhouse>
