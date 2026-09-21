@@ -1,0 +1,94 @@
+version: 2
+models:
+- name: sig_kimchi_premium_hourly
+  description: '**한 행 = (코인, UTC 1시간) 하나.** 같은 코인의 업비트 원화 가격과 바이낸스 USDT 가격을 비교한 신호. 비교가 성립하는 이유는 거래소가 다르기 때문이고, 환율은 외부 API 가 아니라 **우리 데이터(업비트 KRW-USDT 마켓)** 로 만든다(docs/34 #4). 코인 연결은 `dim_coins` 의 `coin_id`
+    로 한다 - 티커 문자열 치환이 아니다(MANTRA↔OM 같은 리브랜딩 때문). **얇은 마켓 주의**: 체결 ≥10 조건만 걸려 있어 극단값(LSK −27.8%, EGLD +38.4%)이 섞인다. 조회 시 유동성 필터를 직접 걸 것.
+
+    '
+  columns:
+  - name: hour_utc
+    description: UTC 시간 버킷. 세 값(업비트·바이낸스·환율)이 모두 같은 시간의 종가다.
+    tests:
+    - not_null
+    data_type: DateTime
+  - name: coin_id
+    description: '`dim_coins` 의 코인 식별자. 거래소별 티커가 달라도 이 값으로 잇는다.'
+    tests:
+    - not_null
+    data_type: LowCardinality(String)
+  - name: upbit_krw
+    description: 그 시간 업비트 원화 종가.
+    data_type: Decimal(20, 8)
+  - name: binance_usdt
+    description: 그 시간 바이낸스 USDT 종가.
+    data_type: Decimal(20, 8)
+  - name: usdt_krw
+    description: 그 시간 USDT/KRW 환율. **업비트 KRW-USDT 마켓의 종가**를 쓴다(외부 환율 API 아님).
+    data_type: Decimal(20, 8)
+  - name: binance_krw_equiv
+    description: 바이낸스 가격을 원화로 환산한 값 = binance_usdt × usdt_krw. 비교의 분모가 되는 값.
+    data_type: Float64
+  - name: premium_pct
+    description: '김치 프리미엄 % = (upbit_krw − binance_krw_equiv) ÷ binance_krw_equiv × 100. **분모가 바이낸스 환산가**라는 점이 핵심이다 - 분모를 업비트로 잡으면 부호는 같아도 값이 다르다. 환산가가 0 이면 NULL.
+
+      '
+    tests:
+    - not_null
+    data_type: Nullable(Float64)
+  - name: upbit_trades
+    description: 그 시간 업비트 체결 건수. 신뢰도 판단용 - 적으면 종가가 튄다.
+    data_type: UInt64
+  - name: binance_trades
+    description: 그 시간 바이낸스 체결 건수.
+    data_type: UInt64
+  config:
+    contract:
+      enforced: true
+- name: sig_cross_venue_flag_overlap
+  description: '**한 행 = (UTC 하루, 마켓, 플래그) 하나.** 업비트가 그 코인에 시장경보를 건 구간과 우리가 바이낸스 테스트넷에 낸 주문이 겹치는지 본다. 가격을 비교하는 신호가 아니라 **사건의 겹침**을 보는 신호다. 실돈은 없다(테스트넷).
+
+    '
+  columns:
+  - name: day_utc
+    description: UTC 기준 하루.
+    tests:
+    - not_null
+    data_type: Date
+  - name: market
+    description: 업비트 마켓 코드(경보가 걸린 쪽).
+    tests:
+    - not_null
+    data_type: LowCardinality(String)
+  - name: symbol
+    description: 바이낸스 심볼(우리가 주문을 낸 쪽). `dim_coins` 로 이은 결과.
+    data_type: LowCardinality(String)
+  - name: flag
+    description: 경보 종류. WARNING(유의) 또는 주의 5종(PRICE_FLUCTUATIONS 등).
+    data_type: LowCardinality(String)
+  - name: level
+    description: 경보 수준 문자열. 거래소 이력에서 온 값이거나 폴링 관측값('polled').
+    data_type: String
+  - name: source
+    description: '출처: `exchange_records`(거래소 공개 이력) 또는 `polled`(우리 1분 폴링). 이력이 없는 WARNING 은 폴링에만 있다.'
+    data_type: String
+  - name: orders_in_flag_window
+    description: 경보 구간 안에 우리가 낸 주문 수.
+    data_type: UInt64
+  - name: filled_in_flag_window
+    description: 그중 체결된 주문 수.
+    data_type: UInt64
+  - name: quote_in_flag_window
+    description: 그 구간 체결 금액 합(USDT).
+    data_type: Decimal(38, 8)
+  - name: first_order_at
+    description: 구간 안 첫 주문 시각(UTC).
+    data_type: DateTime64(3)
+  - name: last_order_at
+    description: 구간 안 마지막 주문 시각(UTC).
+    data_type: DateTime64(3)
+  - name: note
+    description: 판단에 필요한 맥락 메모(구간 길이, 겹침 방식 등).
+    data_type: String
+  config:
+    contract:
+      enforced: true

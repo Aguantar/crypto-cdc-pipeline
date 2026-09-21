@@ -1,0 +1,172 @@
+version: 2
+models:
+- name: mart_daily_summary
+  description: '**한 행 = (마켓, KST 하루) 하나.** 일별 종합 리포트가 읽는 표. 하루 경계는 KST 다(리포트를 한국 시간으로 읽기 때문). 대조·품질 표의 `day_utc` 와 뜻이 다르므로 섞어 쓰지 않는다(docs/34 #3). 금액·수량·가격은 Decimal, 비율·파생 지표는 Float64 라는 타입 규약을 따른다(docs/34
+    #5).
+
+    '
+  config:
+    contract:
+      enforced: true
+  columns:
+  - name: market
+    description: 업비트 마켓 코드. 예 `KRW-BTC`. 원화 마켓만 수집한다.
+    tests:
+    - not_null
+    data_type: LowCardinality(String)
+  - name: day_kst
+    description: '**KST 기준 하루.** 체결 시각(거래소 체결 시각)을 Asia/Seoul 로 바꿔 자른 날짜. 적재 시각이 아니다.'
+    tests:
+    - not_null
+    data_type: Date
+  - name: open
+    description: 그 날 첫 체결가(KST 하루의 첫 체결). 시가.
+    data_type: Decimal(20, 8)
+  - name: high
+    description: 그 날 최고 체결가.
+    data_type: Decimal(20, 8)
+  - name: low
+    description: 그 날 최저 체결가.
+    data_type: Decimal(20, 8)
+  - name: close
+    description: 그 날 마지막 체결가. 종가. **이벤트 순서 기준**이며 도착 순서가 아니다(재정렬 때문에 다를 수 있다, docs/29).
+    data_type: Decimal(20, 8)
+  - name: volume
+    description: 그 날 체결 수량 합(코인 개수).
+    data_type: Decimal(38, 8)
+  - name: amount
+    description: '그 날 체결 금액 합(KRW). 거래소가 준 금액이 아니라 **가격 × 수량을 Decimal 로 계산**한 값이다 - MySQL 의 DECIMAL(20,4) 가 먼지 체결을 0 으로 만들기 때문(docs/34 #5).'
+    data_type: Decimal(38, 16)
+  - name: trade_count
+    description: 그 날 체결 건수.
+    data_type: UInt64
+  - name: bid_count
+    description: '테이커가 매수인 체결 건수. 업비트 `ask_bid` 는 **테이커 방향**이다(docs/34 #4).'
+    data_type: UInt64
+  - name: ask_count
+    description: 테이커가 매도인 체결 건수.
+    data_type: UInt64
+  - name: vwap
+    description: 거래량 가중 평균가 = 금액 합 ÷ 수량 합. 단순 평균이 아니다. 비율·파생이라 Float64.
+    data_type: Float64
+  - name: daily_range_pct
+    description: 일중 변동폭 % = (고가 − 저가) ÷ 저가 × 100.
+    data_type: Float64
+  - name: bid_ratio_pct
+    description: 테이커 매수 비율 % = bid_count ÷ trade_count × 100. 50 보다 크면 그 날 매수 주도.
+    data_type: Float64
+  - name: close_change_pct
+    description: 전일 종가 대비 변동률 %. **전일 행이 없으면 NULL 이 아니라 0** 이 아니라는 점에 주의 - 모델 정의를 확인하고 쓸 것.
+    data_type: Float64
+  - name: volume_change_pct
+    description: 전일 거래량 대비 변동률 %.
+    data_type: Float64
+- name: mart_trade_orderbook_1m
+  description: '**한 행 = (마켓, UTC 1분) 하나.** 체결과 호가를 같은 분에 붙인 표 - 우리만 가진 결합이다(docs/27). 하루 경계는 UTC 다(`day_utc`). 체결만 있고 호가가 없는 분, 그 반대의 분이 모두 존재하므로 `has_trades`·`has_book` 으로 어느 쪽이 있는지 먼저 보고 써야 한다. bp = basis
+    point(1bp = 0.01%).
+
+    '
+  columns:
+  - name: day_utc
+    description: UTC 기준 하루. 증분 재계산의 단위이기도 하다(delete+insert).
+    tests:
+    - not_null
+    data_type: Date
+  - name: market
+    description: 업비트 마켓 코드.
+    tests:
+    - not_null
+    data_type: String
+  - name: minute
+    description: UTC 분 시작 시각. 체결은 거래소 체결 시각, 호가는 거래소 호가 시각 기준이다.
+    tests:
+    - not_null
+    data_type: DateTime
+  - name: trade_count
+    description: 그 분의 체결 건수. 0 이면 `has_trades = 0`.
+    data_type: UInt64
+  - name: volume
+    description: 그 분 체결 수량 합.
+    data_type: Decimal(38, 8)
+  - name: amount
+    description: 그 분 체결 금액 합(KRW).
+    data_type: Decimal(38, 16)
+  - name: vwap
+    description: 그 분 거래량 가중 평균가. 체결이 없으면 NULL.
+    data_type: Nullable(Float64)
+  - name: open
+    description: 그 분 첫 체결가.
+    data_type: Decimal(20, 8)
+  - name: high
+    description: 그 분 최고 체결가.
+    data_type: Decimal(20, 8)
+  - name: low
+    description: 그 분 최저 체결가.
+    data_type: Decimal(20, 8)
+  - name: close
+    description: 그 분 마지막 체결가(이벤트 순서 기준).
+    data_type: Decimal(20, 8)
+  - name: buy_ratio
+    description: 그 분 테이커 매수 비율(0~1).
+    data_type: Float64
+  - name: price_range_bp
+    description: 그 분 가격 변동폭 = (고가 − 저가) ÷ 저가 × 10000 (bp). 체결이 없으면 NULL.
+    data_type: Nullable(Float64)
+  - name: snapshots
+    description: 그 분에 들어온 호가 스냅샷 수. 0 이면 `has_book = 0`. 정상은 분당 약 60.
+    data_type: UInt32
+  - name: mid_open
+    description: 그 분 첫 스냅샷의 중간가 = (최우선 매수호가 + 최우선 매도호가) ÷ 2.
+    data_type: Float64
+  - name: mid_close
+    description: 그 분 마지막 스냅샷의 중간가.
+    data_type: Float64
+  - name: mid_min
+    description: 그 분 중간가 최소.
+    data_type: Float64
+  - name: mid_max
+    description: 그 분 중간가 최대.
+    data_type: Float64
+  - name: spread_bp_avg
+    description: 평균 스프레드 = (매도호가 − 매수호가) ÷ 중간가 × 10000 (bp). 얇은 마켓일수록 크다.
+    data_type: Float64
+  - name: spread_bp_max
+    description: 그 분 최대 스프레드(bp).
+    data_type: Float64
+  - name: imb1_avg
+    description: 최우선 1호가 불균형 평균 = (매수잔량 − 매도잔량) ÷ (매수잔량 + 매도잔량). −1~1, 양수면 매수 우위.
+    data_type: Float64
+  - name: imb5_avg
+    description: 상위 5호가 불균형 평균. 정의는 imb1 과 같고 범위만 넓다.
+    data_type: Float64
+  - name: imb15_avg
+    description: 상위 15호가 불균형 평균.
+    data_type: Float64
+  - name: ask_depth15_avg
+    description: 상위 15호가 매도 잔량 합의 평균(코인 개수).
+    data_type: Float64
+  - name: bid_depth15_avg
+    description: 상위 15호가 매수 잔량 합의 평균.
+    data_type: Float64
+  - name: volume_over_depth15
+    description: '그 분 체결량 ÷ 상위 15호가 총 깊이. **이 표를 만든 이유인 지표**(docs/27): EURC 되튐의 원인이 스프레드가 아니라 ''깊이 대비 체결량''이었다는 것을 이 값이 보여 줬다(≥300bp 변동 분의 중앙값 1.0). 깊이가 0 이면 NULL.
+
+      '
+    data_type: Nullable(Float64)
+  - name: close_vs_mid_bp
+    description: 분 종가가 중간가에서 얼마나 떨어져 있나(bp). 양수면 체결이 매도호가 쪽에서 일어났다는 뜻.
+    data_type: Nullable(Float64)
+  - name: has_trades
+    description: 그 분에 체결이 있었나(1/0). **먼저 확인하고 체결 지표를 써야 한다.**
+    tests:
+    - not_null
+    data_type: UInt8
+  - name: has_book
+    description: 그 분에 호가 스냅샷이 있었나(1/0).
+    tests:
+    - not_null
+    data_type: UInt8
+  config:
+    contract:
+      enforced: true
+    on_schema_change: fail
