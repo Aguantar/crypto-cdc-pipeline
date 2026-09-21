@@ -1,0 +1,10 @@
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    uid: prometheus-airflow
+    access: proxy
+    url: http://cdc-prometheus:9090
+    isDefault: false
+    editable: true

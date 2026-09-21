@@ -1,0 +1,1809 @@
+{
+  "uid": "cdc-pipeline-main",
+  "title": "파이프라인 관측 · 오류 탐지",
+  "tags": [
+    "cdc",
+    "pipeline"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "10s",
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "row",
+      "title": "① 지금 정상인가",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "PDEE91DDB90597936"
+      },
+      "description": "5개: CDC 체결 · Upbit 호가 · Binance 체결 · Binance 호가 · Circuit Connect",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 5
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "id": 2,
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "PDEE91DDB90597936"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "sql",
+          "rawSql": "-- 2026-09-20 재작성: 원래 이 대시보드는 Prometheus 12패널이었는데 Prometheus 는 09-20 에 ops 프로필로\n-- 내려서 평소엔 꺼져 있다 → **12패널 전부 빈 화면**이었다. 만든 것과 도는 것은 다르다.\n-- 대체재로 만들어 둔 ops_metrics_5m(5분 cron 호스트 지표, docs/32)로 다시 세웠다.\nSELECT argMax(flink_running, ts) AS `잡` FROM cdc_pipeline.ops_metrics_5m",
+          "refId": "A"
+        }
+      ],
+      "title": "Flink 잡 (정상이면 5)",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "PDEE91DDB90597936"
+      },
+      "description": "4 를 넘으면 코어 수만큼 일이 밀려 있다는 뜻. 주간 다이제스트가 p95 로 판정한다.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "decimals": 2,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 3.5
+              },
+              {
+                "color": "red",
+                "value": 6
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 4,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "id": 3,
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "PDEE91DDB90597936"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "sql",
+          "rawSql": "SELECT round(argMax(load1, ts), 2) AS `load1` FROM cdc_pipeline.ops_metrics_5m",
+          "refId": "A"
+        }
+      ],
+      "title": "서버 부하 (코어 4개)",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "PDEE91DDB90597936"
+      },
+      "description": "",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "unit": "decgbytes",
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 50
+              },
+              {
+                "color": "green",
+                "value": 150
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "id": 4,
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "PDEE91DDB90597936"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "sql",
+          "rawSql": "SELECT round(argMax(disk_free_mb, ts) / 1024, 1) AS `GB` FROM cdc_pipeline.ops_metrics_5m",
+          "refId": "A"
+        }
+      ],
+      "title": "남은 디스크",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "PDEE91DDB90597936"
+      },
+      "description": "거래소 체결 시각 → ClickHouse 적재까지. SLO 30초(docs/32).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "unit": "s",
+          "decimals": 2,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 15
+              },
+              {
+                "color": "red",
+                "value": 30
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "id": 5,
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "PDEE91DDB90597936"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "sql",
+          "rawSql": "SELECT round(argMax(upbit_e2e_p95_s, ts), 2) AS `p95` FROM cdc_pipeline.ops_metrics_5m",
+          "refId": "A"
+        }
+      ],
+      "title": "업비트 지연 p95",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "PDEE91DDB90597936"
+      },
+      "description": "",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "unit": "s",
+          "decimals": 2,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 15
+              },
+              {
+                "color": "red",
+                "value": 30
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "id": 6,
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "PDEE91DDB90597936"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "sql",
+          "rawSql": "SELECT round(argMax(binance_e2e_p95_s, ts), 2) AS `p95` FROM cdc_pipeline.ops_metrics_5m",
+          "refId": "A"
+        }
+      ],
+      "title": "바이낸스 지연 p95",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "PDEE91DDB90597936"
+      },
+      "description": "1,000 = 포화. 500 을 넘으면 유실 전에 알린다 — 포화 선행 지표(docs/23 §5).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "unit": "ms",
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 500
+              },
+              {
+                "color": "red",
+                "value": 1000
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 20,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "id": 7,
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "PDEE91DDB90597936"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "sql",
+          "rawSql": "SELECT round(argMax(flink_busy_max, ts), 0) AS `busy` FROM cdc_pipeline.ops_metrics_5m",
+          "refId": "A"
+        }
+      ],
+      "title": "Flink 소스 포화도",
+      "type": "stat"
+    },
+    {
+      "id": 8,
+      "type": "row",
+      "title": "② 얼마나 들어오나 (두 거래소, 네 경로)",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 5,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "PDEE91DDB90597936"
+      },
+      "description": "Upbit 체결(289 마켓)·Binance 체결(493 심볼)·양쪽 호가. Binance 체결은 Kafka 직행이고 호가는 증분+스냅샷을 Flink 가 재구성한 1초 상위 20. · 경로별 유입량이 10배 이상 차이나서 로그 축을 쓴다. 선형 축이면 바이낸스 체결이 나머지를 눌러 안 보인다.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "gradientMode": "opacity",
+            "showPoints": "never",
+            "spanNulls": true,
+            "axisSoftMin": 0,
+            "scaleDistribution": {
+              "type": "log",
+              "log": 10
+            }
+          },
+          "mappings": [],
+          "unit": "short",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 6,
+        "w": 12,
+        "h": 8
+      },
+      "id": 9,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "PDEE91DDB90597936"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "sql",
+          "rawSql": "-- 2026-09-20: 파이프라인이 Upbit 단일에서 Upbit+Binance 두 거래소로 넓어졌다(docs/31).\n-- 네 경로를 한 축에 놓아야 '무엇이 볼륨으로 일하는지'가 보인다.\nSELECT time,\n       sum(upbit_trades)     AS `Upbit 체결`,\n       sum(binance_trades)   AS `Binance 체결`,\n       sum(upbit_orderbook)  AS `Upbit 호가`,\n       sum(binance_orderbook) AS `Binance 호가`\nFROM (\n  SELECT toStartOfMinute(flink_ts) AS time, count() AS upbit_trades, 0 AS binance_trades, 0 AS upbit_orderbook, 0 AS binance_orderbook\n    FROM cdc_pipeline.crypto_trades WHERE flink_ts >= now() - INTERVAL 1 HOUR GROUP BY time\n  UNION ALL SELECT toStartOfMinute(flink_ts), 0, count(), 0, 0 FROM cdc_pipeline.binance_trades WHERE flink_ts >= now() - INTERVAL 1 HOUR GROUP BY 1\n  UNION ALL SELECT toStartOfMinute(recv_ts), 0, 0, count(), 0 FROM cdc_pipeline.orderbook_raw WHERE recv_ts >= now() - INTERVAL 1 HOUR GROUP BY 1\n  UNION ALL SELECT toStartOfMinute(ts), 0, 0, 0, count() FROM cdc_pipeline.binance_orderbook_raw WHERE ts >= now() - INTERVAL 1 HOUR GROUP BY 1\n)\nGROUP BY time ORDER BY time",
+          "refId": "A"
+        }
+      ],
+      "title": "분당 들어온 행 수 (경로별)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "PDEE91DDB90597936"
+      },
+      "description": "위 패널은 ClickHouse 를 직접 세고, 이 패널은 5분 cron 이 남긴 스냅샷이다. 둘이 어긋나면 수집기 자체를 의심한다.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "gradientMode": "opacity",
+            "showPoints": "never",
+            "spanNulls": true,
+            "axisSoftMin": 0
+          },
+          "mappings": [],
+          "unit": "short",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 6,
+        "w": 12,
+        "h": 8
+      },
+      "id": 10,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "PDEE91DDB90597936"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "sql",
+          "rawSql": "SELECT ts AS time, upbit_trades_5m AS `Upbit 체결`, binance_trades_5m AS `Binance 체결`, orderbook_5m AS `Upbit 호가`\nFROM cdc_pipeline.ops_metrics_5m ORDER BY ts",
+          "refId": "A"
+        }
+      ],
+      "title": "유입 추세 (5분 단위)",
+      "type": "timeseries"
+    },
+    {
+      "id": 11,
+      "type": "row",
+      "title": "③ 어디서 밀리나",
+      "collapsed": true,
+      "gridPos": {
+        "x": 0,
+        "y": 14,
+        "w": 24,
+        "h": 1
+      },
+      "panels": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "PDEE91DDB90597936"
+          },
+          "description": "튀는 구간은 대개 배포·재생성이다. 밀렸다가 따라잡는 것이지 유실이 아니다.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "drawStyle": "line",
+                "lineWidth": 2,
+                "fillOpacity": 10,
+                "gradientMode": "opacity",
+                "showPoints": "never",
+                "spanNulls": true,
+                "axisSoftMin": 0,
+                "thresholdsStyle": {
+                  "mode": "dashed"
+                }
+              },
+              "mappings": [],
+              "unit": "s",
+              "decimals": 2,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "red",
+                    "value": 30
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "x": 0,
+            "y": 15,
+            "w": 8,
+            "h": 8
+          },
+          "id": 12,
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "grafana-clickhouse-datasource",
+                "uid": "PDEE91DDB90597936"
+              },
+              "editorType": "sql",
+              "format": 1,
+              "queryType": "sql",
+              "rawSql": "SELECT ts AS time, upbit_e2e_p95_s AS `Upbit`, binance_e2e_p95_s AS `Binance`\nFROM cdc_pipeline.ops_metrics_5m ORDER BY ts",
+              "refId": "A"
+            }
+          ],
+          "title": "거래소 체결부터 적재까지 (p95)",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "PDEE91DDB90597936"
+          },
+          "gridPos": {
+            "x": 8,
+            "y": 15,
+            "w": 8,
+            "h": 8
+          },
+          "id": 13,
+          "targets": [
+            {
+              "datasource": {
+                "type": "grafana-clickhouse-datasource",
+                "uid": "PDEE91DDB90597936"
+              },
+              "format": 0,
+              "queryType": "sql",
+              "rawSql": "SELECT toDateTime(day_utc) as time, lag_p50_s, lag_p95_s, lag_max_live_s FROM cdc_pipeline.dq_ingest_daily WHERE day_utc >= today() - 30 ORDER BY day_utc",
+              "refId": "A"
+            }
+          ],
+          "title": "적재 지연 (중앙값 / p95 / 최대)",
+          "type": "timeseries",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "drawStyle": "line",
+                "lineWidth": 2,
+                "fillOpacity": 10,
+                "gradientMode": "opacity",
+                "showPoints": "never",
+                "spanNulls": true,
+                "axisSoftMin": 0,
+                "thresholdsStyle": {
+                  "mode": "dashed"
+                }
+              },
+              "mappings": [],
+              "unit": "s",
+              "decimals": 2,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "red",
+                    "value": 60
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          }
+        },
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "PDEE91DDB90597936"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "drawStyle": "line",
+                "lineWidth": 2,
+                "fillOpacity": 10,
+                "gradientMode": "opacity",
+                "showPoints": "never",
+                "spanNulls": true,
+                "axisSoftMin": 0
+              },
+              "mappings": [],
+              "unit": "ms",
+              "decimals": 0
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "avg_latency"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "fixedColor": "green",
+                      "mode": "fixed"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "max_latency"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "fixedColor": "orange",
+                      "mode": "fixed"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "gridPos": {
+            "x": 16,
+            "y": 15,
+            "w": 8,
+            "h": 8
+          },
+          "id": 14,
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "format": 1,
+              "rawSql": "SELECT toStartOfMinute(source_ts) as time, avg(cdc_latency_ms) as avg_latency, max(cdc_latency_ms) as max_latency FROM cdc_pipeline.crypto_trades WHERE op = 'c' AND source_ts >= now() - INTERVAL 1 HOUR GROUP BY time ORDER BY time",
+              "refId": "A",
+              "datasource": {
+                "type": "grafana-clickhouse-datasource",
+                "uid": "PDEE91DDB90597936"
+              }
+            }
+          ],
+          "title": "CDC 구간 지연 (binlog에서 Flink까지)",
+          "type": "timeseries",
+          "description": "종단 지연은 '거래소 체결 → 적재'이고 이 패널은 그중 CDC 구간만이다. 구간을 나눠야 병목이 어디인지 말할 수 있다."
+        }
+      ]
+    },
+    {
+      "id": 15,
+      "type": "row",
+      "title": "④ 값이 맞나 (거래소·원장 대조)",
+      "collapsed": true,
+      "gridPos": {
+        "x": 0,
+        "y": 15,
+        "w": 24,
+        "h": 1
+      },
+      "panels": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "PDEE91DDB90597936"
+          },
+          "gridPos": {
+            "x": 0,
+            "y": 16,
+            "w": 8,
+            "h": 7
+          },
+          "id": 16,
+          "targets": [
+            {
+              "datasource": {
+                "type": "grafana-clickhouse-datasource",
+                "uid": "PDEE91DDB90597936"
+              },
+              "format": 0,
+              "queryType": "sql",
+              "rawSql": "SELECT toDateTime(day_utc) as time, weighted_pct FROM cdc_pipeline.dq_reconcile_daily WHERE day_utc >= today() - 30 ORDER BY day_utc",
+              "refId": "A"
+            }
+          ],
+          "title": "업비트 대조 일치율",
+          "type": "stat",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "unit": "percent",
+              "decimals": 3,
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "red",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 99
+                  },
+                  {
+                    "color": "green",
+                    "value": 99.9
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "colorMode": "background",
+            "graphMode": "area",
+            "justifyMode": "auto",
+            "orientation": "auto",
+            "textMode": "auto"
+          },
+          "description": "거래소 시간봉 대비 우리 체결 수량. 배경색은 최근 완결일 기준, 작은 그래프는 30일 추세. 목표 99.9% 이상."
+        },
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "PDEE91DDB90597936"
+          },
+          "description": "거래소 시간봉의 체결 건수 대비. 업비트는 수량 기준이라 분모가 다르다.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "unit": "percent",
+              "decimals": 3,
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "red",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 99
+                  },
+                  {
+                    "color": "green",
+                    "value": 99.9
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "x": 8,
+            "y": 16,
+            "w": 8,
+            "h": 7
+          },
+          "id": 17,
+          "options": {
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "colorMode": "background",
+            "graphMode": "area",
+            "justifyMode": "auto",
+            "orientation": "auto",
+            "textMode": "auto"
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "grafana-clickhouse-datasource",
+                "uid": "PDEE91DDB90597936"
+              },
+              "editorType": "sql",
+              "format": 1,
+              "queryType": "sql",
+              "rawSql": "-- Upbit 은 '원장 대조'(체결 수량), Binance 는 REST 1시간 캔들의 체결 수와 우리 행 수를 센다(docs/31).\n-- 분모가 다르므로 같은 패널에 겹치지 않고 따로 둔다 — 같은 이름의 지표라도 정의가 다르면 나란히 두지 않는다.\nSELECT toDateTime(day_utc) AS time, weighted_pct AS `가중 비율(%)`, min_cell_pct AS `최소 셀(%)`\nFROM cdc_pipeline.dq_binance_reconcile_daily ORDER BY day_utc",
+              "refId": "A"
+            }
+          ],
+          "title": "바이낸스 대조 일치율",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "PDEE91DDB90597936"
+          },
+          "description": "불일치가 0 이어야 한다. 0 이 아니면 어느 구간이 깨졌는지를 두 열이 가른다.",
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "align": "auto",
+                "cellOptions": {
+                  "type": "auto"
+                },
+                "inspect": false
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "x": 16,
+            "y": 16,
+            "w": 8,
+            "h": 7
+          },
+          "id": 18,
+          "options": {
+            "showHeader": true,
+            "cellHeight": "sm",
+            "footer": {
+              "show": false,
+              "reducer": [
+                "sum"
+              ],
+              "countRows": false,
+              "fields": ""
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "grafana-clickhouse-datasource",
+                "uid": "PDEE91DDB90597936"
+              },
+              "editorType": "sql",
+              "format": 1,
+              "queryType": "sql",
+              "rawSql": "-- 우리 원장이 거래소와 같은가(ex_my), 그리고 CDC 가 그것을 온전히 옮겼는가(my_ch).\n-- 둘을 나눠 보는 이유: 앞은 '원장이 맞나', 뒤는 '파이프라인이 맞나' — 고칠 곳이 다르다.\nSELECT toString(day_utc) AS `날짜`, count() AS `심볼`,\n       sum(ex_my_mismatch) AS `거래소≠MySQL`, sum(my_ch_mismatch) AS `MySQL≠ClickHouse`,\n       sum(my_orders) AS `주문`, sum(my_filled) AS `체결`\nFROM cdc_pipeline.dq_ledger_daily GROUP BY day_utc ORDER BY day_utc DESC LIMIT 10",
+              "refId": "A"
+            }
+          ],
+          "title": "가상 원장 3자 대조 (거래소 = MySQL = ClickHouse)",
+          "type": "table"
+        },
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "PDEE91DDB90597936"
+          },
+          "gridPos": {
+            "x": 0,
+            "y": 23,
+            "w": 12,
+            "h": 7
+          },
+          "id": 19,
+          "targets": [
+            {
+              "datasource": {
+                "type": "grafana-clickhouse-datasource",
+                "uid": "PDEE91DDB90597936"
+              },
+              "format": 0,
+              "queryType": "sql",
+              "rawSql": "SELECT toDateTime(day_utc) as time, cells_below_99, markets_no_rows FROM cdc_pipeline.dq_reconcile_daily WHERE day_utc >= today() - 30 ORDER BY day_utc",
+              "refId": "A"
+            }
+          ],
+          "title": "대조가 어긋난 셀 수",
+          "type": "barchart",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "unit": "short",
+              "decimals": 0,
+              "custom": {
+                "axisPlacement": "auto",
+                "fillOpacity": 80,
+                "gradientMode": "none",
+                "lineWidth": 1
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "orientation": "auto",
+            "showValue": "auto",
+            "stacking": "none",
+            "xTickLabelRotation": 0,
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi"
+            }
+          },
+          "description": "가중 일치율이 가리는 국소 유실을 여기서 본다. 0이어야 정상."
+        },
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "PDEE91DDB90597936"
+          },
+          "description": "Binance Testnet 에 우리 규칙대로 주문을 내고, 상태를 바꾸는 주체는 거래소 매칭 엔진이다. 실돈은 없다.",
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "align": "auto",
+                "cellOptions": {
+                  "type": "auto"
+                },
+                "inspect": false
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "x": 12,
+            "y": 23,
+            "w": 12,
+            "h": 7
+          },
+          "id": 20,
+          "options": {
+            "showHeader": true,
+            "cellHeight": "sm",
+            "footer": {
+              "show": false,
+              "reducer": [
+                "sum"
+              ],
+              "countRows": false,
+              "fields": ""
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "grafana-clickhouse-datasource",
+                "uid": "PDEE91DDB90597936"
+              },
+              "editorType": "sql",
+              "format": 1,
+              "queryType": "sql",
+              "rawSql": "-- 시세는 전부 INSERT 뿐이라 CDC 의 본질인 상태 변경이 없다. 그 전이를 만들려고 2층 원장을 둔다(docs/28 B).\n-- avg_versions 가 1 보다 크다는 것이 곧 '한 주문 행이 여러 번 갱신됐다' = UPDATE 를 잡았다는 증거다.\nSELECT last_exec_type AS `전이`, count() AS `건수`, uniqExact(order_id) AS `주문 수`,\n       round(avg(version), 2) AS `평균 버전(=갱신 횟수)`\nFROM cdc_pipeline.virtual_orders FINAL\nWHERE is_deleted = 0 AND updated_ms >= toUnixTimestamp(now() - INTERVAL 24 HOUR) * 1000\nGROUP BY last_exec_type ORDER BY count() DESC",
+              "refId": "A"
+            }
+          ],
+          "title": "가상 원장이 만든 상태 변경 (CDC가 잡은 UPDATE)",
+          "type": "table"
+        }
+      ]
+    },
+    {
+      "id": 21,
+      "type": "row",
+      "title": "⑤ 무엇이 빠졌나",
+      "collapsed": true,
+      "gridPos": {
+        "x": 0,
+        "y": 16,
+        "w": 24,
+        "h": 1
+      },
+      "panels": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "PDEE91DDB90597936"
+          },
+          "gridPos": {
+            "x": 0,
+            "y": 17,
+            "w": 12,
+            "h": 7
+          },
+          "id": 22,
+          "targets": [
+            {
+              "datasource": {
+                "type": "grafana-clickhouse-datasource",
+                "uid": "PDEE91DDB90597936"
+              },
+              "format": 0,
+              "queryType": "sql",
+              "rawSql": "SELECT toDateTime(i.day_utc) as time, i.late_rows_gt_60s, ifNull(r.rows_recovered, 0) as rows_recovered FROM cdc_pipeline.dq_ingest_daily i LEFT JOIN (SELECT day_utc, sum(rows_recovered) rows_recovered FROM cdc_pipeline.dq_repairs_daily GROUP BY day_utc) r ON r.day_utc = i.day_utc WHERE i.day_utc >= today() - 30 ORDER BY i.day_utc",
+              "refId": "A"
+            }
+          ],
+          "title": "늦게 도착한 행과 복구한 행",
+          "type": "barchart",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "unit": "short",
+              "decimals": 0,
+              "custom": {
+                "axisPlacement": "auto",
+                "fillOpacity": 80,
+                "gradientMode": "none",
+                "lineWidth": 1
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "orientation": "auto",
+            "showValue": "auto",
+            "stacking": "none",
+            "xTickLabelRotation": 0,
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi"
+            }
+          }
+        },
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "PDEE91DDB90597936"
+          },
+          "description": "코인별 거래지원 중단은 본문에 재개 시각만 있는 경우가 있어 창을 지어내지 않고 후보로만 둔다.",
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "align": "auto",
+                "cellOptions": {
+                  "type": "auto"
+                },
+                "inspect": false
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "x": 12,
+            "y": 17,
+            "w": 12,
+            "h": 7
+          },
+          "id": 23,
+          "options": {
+            "showHeader": true,
+            "cellHeight": "sm",
+            "footer": {
+              "show": false,
+              "reducer": [
+                "sum"
+              ],
+              "countRows": false,
+              "fields": ""
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "grafana-clickhouse-datasource",
+                "uid": "PDEE91DDB90597936"
+              },
+              "editorType": "sql",
+              "format": 1,
+              "queryType": "sql",
+              "rawSql": "-- 공백을 세는 것만으로는 사고인지 점검인지 모른다. 업비트 서버 점검 중에는 전 마켓 거래가 멈춘다(정상).\n-- explained=1 이면 그 공백은 유실이 아니다(docs/37).\nSELECT toString(window_start) AS `시작`, gap_seconds AS `초`, reason AS `사유`,\n       inserted_rows AS `복구 행`, explained_by_maintenance AS `점검으로 설명됨`,\n       arrayStringConcat(maintenance_notices, ' / ') AS `공지`\nFROM cdc_pipeline.dq_ingest_gaps_labeled ORDER BY window_start DESC LIMIT 15",
+              "refId": "A"
+            }
+          ],
+          "title": "수집 공백과 그 설명 (거래소 공지 대조)",
+          "type": "table"
+        },
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "PDEE91DDB90597936"
+          },
+          "gridPos": {
+            "x": 0,
+            "y": 24,
+            "w": 12,
+            "h": 7
+          },
+          "id": 24,
+          "targets": [
+            {
+              "datasource": {
+                "type": "grafana-clickhouse-datasource",
+                "uid": "PDEE91DDB90597936"
+              },
+              "format": 1,
+              "queryType": "sql",
+              "rawSql": "SELECT toDateTime(day_utc) as time, reason, repairs, gap_seconds, exchange_rows_in_windows, rows_recovered FROM cdc_pipeline.dq_repairs_daily ORDER BY day_utc DESC LIMIT 30",
+              "refId": "A"
+            }
+          ],
+          "title": "공백을 메운 기록",
+          "type": "table",
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "align": "auto",
+                "cellOptions": {
+                  "type": "auto"
+                },
+                "inspect": false
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "showHeader": true,
+            "cellHeight": "sm",
+            "footer": {
+              "show": false,
+              "reducer": [
+                "sum"
+              ],
+              "countRows": false,
+              "fields": ""
+            }
+          }
+        },
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "PDEE91DDB90597936"
+          },
+          "description": "위반이 있거나 3시간 넘게 기록이 없으면 quality_alerts DAG 이 Slack 으로 알린다.",
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "align": "auto",
+                "cellOptions": {
+                  "type": "auto"
+                },
+                "inspect": false
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "x": 12,
+            "y": 24,
+            "w": 12,
+            "h": 7
+          },
+          "id": 25,
+          "options": {
+            "showHeader": true,
+            "cellHeight": "sm",
+            "footer": {
+              "show": false,
+              "reducer": [
+                "sum"
+              ],
+              "countRows": false,
+              "fields": ""
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "grafana-clickhouse-datasource",
+                "uid": "PDEE91DDB90597936"
+              },
+              "editorType": "sql",
+              "format": 1,
+              "queryType": "sql",
+              "rawSql": "-- Debezium 을 schemas.enable=false 로 쓰므로 메시지 안에 스키마가 없다. 계약을 schemas/ 에 밖에 적고\n-- 살아 있는 토픽 표본과 매시 대조한다. '위반 없음'과 '검사 안 함'은 다르므로 마지막 실행 시각도 본다.\nSELECT topic AS `토픽`, status AS `상태`, checked AS `검사`, violations AS `위반`,\n       toString(max(ran_at)) AS `마지막 검증`\nFROM cdc_pipeline.schema_validation_runs\nWHERE ran_at >= (SELECT max(ran_at) FROM cdc_pipeline.schema_validation_runs)\nGROUP BY topic, status, checked, violations ORDER BY violations DESC, topic",
+              "refId": "A"
+            }
+          ],
+          "title": "토픽 계약 검증 (매시 자동)",
+          "type": "table"
+        }
+      ]
+    },
+    {
+      "id": 26,
+      "type": "row",
+      "title": "⑥ 자원과 알림",
+      "collapsed": true,
+      "gridPos": {
+        "x": 0,
+        "y": 17,
+        "w": 24,
+        "h": 1
+      },
+      "panels": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "PDEE91DDB90597936"
+          },
+          "description": "16GB 한 대에서 전부 돈다. 한도의 90% 를 넘으면 주간 다이제스트가 '고칠 것'에 올린다.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "drawStyle": "line",
+                "lineWidth": 2,
+                "fillOpacity": 10,
+                "gradientMode": "opacity",
+                "showPoints": "never",
+                "spanNulls": true,
+                "axisSoftMin": 0
+              },
+              "mappings": [],
+              "unit": "decmbytes",
+              "decimals": 0
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "x": 0,
+            "y": 18,
+            "w": 8,
+            "h": 8
+          },
+          "id": 27,
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "grafana-clickhouse-datasource",
+                "uid": "PDEE91DDB90597936"
+              },
+              "editorType": "sql",
+              "format": 1,
+              "queryType": "sql",
+              "rawSql": "SELECT ts AS time, mem_kafka_mb AS Kafka, mem_tm_mb AS `Flink TM`, mem_ch_mb AS ClickHouse,\n       mem_mysql_mb AS MySQL, mem_scheduler_mb AS `Airflow 스케줄러`\nFROM cdc_pipeline.ops_metrics_5m ORDER BY ts",
+              "refId": "A"
+            }
+          ],
+          "title": "컨테이너별 메모리",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "PDEE91DDB90597936"
+          },
+          "description": "스왑이 오르면 메모리 한도가 실사용보다 작다는 신호다(09-18 n8n 크래시 루프의 원인).",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "drawStyle": "line",
+                "lineWidth": 2,
+                "fillOpacity": 10,
+                "gradientMode": "opacity",
+                "showPoints": "never",
+                "spanNulls": true,
+                "axisSoftMin": 0
+              },
+              "mappings": [],
+              "unit": "short",
+              "decimals": 2
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "x": 8,
+            "y": 18,
+            "w": 8,
+            "h": 8
+          },
+          "id": 28,
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "grafana-clickhouse-datasource",
+                "uid": "PDEE91DDB90597936"
+              },
+              "editorType": "sql",
+              "format": 1,
+              "queryType": "sql",
+              "rawSql": "SELECT ts AS time, load1 AS load1, load5 AS load5, swap_used_mb / 100 AS `swap(100MiB)`\nFROM cdc_pipeline.ops_metrics_5m ORDER BY ts",
+              "refId": "A"
+            }
+          ],
+          "title": "서버 부하와 스왑",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "PDEE91DDB90597936"
+          },
+          "description": "알림은 Airflow 한 경로로만 나간다(n8n 은 09-20 에 비활성 확인 후 정리). 중복은 dedup_key 로 막는다.",
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "align": "auto",
+                "cellOptions": {
+                  "type": "auto"
+                },
+                "inspect": false
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "x": 16,
+            "y": 18,
+            "w": 8,
+            "h": 8
+          },
+          "id": 29,
+          "options": {
+            "showHeader": true,
+            "cellHeight": "sm",
+            "footer": {
+              "show": false,
+              "reducer": [
+                "sum"
+              ],
+              "countRows": false,
+              "fields": ""
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "grafana-clickhouse-datasource",
+                "uid": "PDEE91DDB90597936"
+              },
+              "editorType": "sql",
+              "format": 1,
+              "queryType": "sql",
+              "rawSql": "SELECT toString(fired_at) AS `시각`, source AS `출처`, name AS `이름`, severity AS `등급`, message AS `내용`\nFROM cdc_pipeline.alert_events ORDER BY fired_at DESC LIMIT 20",
+              "refId": "A"
+            }
+          ],
+          "title": "울린 알림",
+          "type": "table"
+        }
+      ]
+    },
+    {
+      "id": 30,
+      "type": "row",
+      "title": "⑦ 어느 단계가 왜 깨졌나",
+      "collapsed": true,
+      "gridPos": {
+        "x": 0,
+        "y": 18,
+        "w": 24,
+        "h": 1
+      },
+      "panels": [
+        {
+          "id": 31,
+          "type": "table",
+          "title": "최근 사건 (단계, 구성요소, 원인)",
+          "description": "Airflow 는 자기가 실행하는 태스크만 보여 준다. 실시간 경로(수집기→MySQL→Debezium→Kafka→Flink→ClickHouse)는 컨테이너가 돌리므로 그 오류는 Airflow 화면에 없다. health_check 가 감지한 것을 **단계 축**으로 모은 표가 이것이다(docs/41).",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "PDEE91DDB90597936"
+          },
+          "gridPos": {
+            "x": 0,
+            "y": 19,
+            "w": 14,
+            "h": 8
+          },
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "align": "auto",
+                "cellOptions": {
+                  "type": "auto"
+                },
+                "inspect": false
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "showHeader": true,
+            "cellHeight": "sm",
+            "footer": {
+              "show": false,
+              "reducer": [
+                "sum"
+              ],
+              "countRows": false,
+              "fields": ""
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "grafana-clickhouse-datasource",
+                "uid": "PDEE91DDB90597936"
+              },
+              "format": 1,
+              "queryType": "sql",
+              "editorType": "sql",
+              "rawSql": "SELECT toString(detected_at) AS `시각`, stage AS `단계`, component AS `구성요소`,\n       severity AS `등급`, title AS `사건`, substring(detail, 1, 160) AS `근거`\nFROM cdc_pipeline.pipeline_incidents FINAL\nORDER BY detected_at DESC LIMIT 30"
+            }
+          ]
+        },
+        {
+          "id": 32,
+          "type": "barchart",
+          "title": "7일간 단계별 사건 수",
+          "description": "한 단계에 몰리면 그 단계의 설계를 봐야 한다는 신호다.",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "PDEE91DDB90597936"
+          },
+          "gridPos": {
+            "x": 14,
+            "y": 19,
+            "w": 10,
+            "h": 8
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "unit": "short",
+              "decimals": 0,
+              "custom": {
+                "axisPlacement": "auto",
+                "fillOpacity": 80,
+                "gradientMode": "none",
+                "lineWidth": 1
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "orientation": "horizontal",
+            "showValue": "auto",
+            "stacking": "none",
+            "xTickLabelRotation": 0,
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi"
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "grafana-clickhouse-datasource",
+                "uid": "PDEE91DDB90597936"
+              },
+              "format": 1,
+              "queryType": "sql",
+              "editorType": "sql",
+              "rawSql": "SELECT stage AS `단계`, count() AS `건수`, uniqExact(title) AS `종류`,\n       toString(max(detected_at)) AS `마지막`\nFROM cdc_pipeline.pipeline_incidents FINAL\nWHERE detected_at >= now() - INTERVAL 7 DAY\nGROUP BY stage ORDER BY count() DESC"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "description": "파이프라인이 '지금 제대로 도는가'에 답하는 대시보드. 유입 → 지연 → 정확성 → 오류/공백 → 자원 순으로 읽는다. 2026-09-20 재편: 예전에는 메인·품질·운영 세 개로 흩어져 유입·지연·알럿이 중복됐다. · 새로고침 10s: 실시간 관측용이다. 유입이 초당 수백 건이라 10초면 화면이 살아 있다(재편 전 값이었는데 1분으로 바꿨던 것을 되돌림)."
+}
