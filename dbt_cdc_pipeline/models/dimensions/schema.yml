@@ -1,0 +1,270 @@
+version: 2
+models:
+- name: dim_coins
+  description: '**한 행 = 코인 하나.** 거래소마다 다른 티커를 하나의 `coin_id` 로 잇는 표(docs/34 #4). 문자열 치환으로 잇지 않는 이유: 리브랜딩·토큰 스왑으로 티커가 바뀐다(MANTRA↔OM 등) → `coin_alias` seed 로 별칭을 명시한다.
+
+    '
+  columns:
+  - name: coin_id
+    description: 코인 식별자. 거래소 간 조인의 유일한 열쇠. 티커가 아니라 우리가 정한 안정 키.
+    tests:
+    - not_null
+    - unique
+    data_type: LowCardinality(String)
+  - name: upbit_market
+    description: 업비트 원화 마켓 코드(`KRW-XXX`). **업비트에 없으면 빈 문자열**(NULL 이 아니다).
+    tests:
+    - unique:
+        where: upbit_market != ''
+    data_type: LowCardinality(String)
+  - name: binance_symbol
+    description: 바이낸스 USDT 심볼(`XXXUSDT`). **바이낸스에 없으면 빈 문자열**.
+    tests:
+    - unique:
+        where: binance_symbol != ''
+    data_type: LowCardinality(String)
+  - name: upbit_base
+    description: 업비트 쪽 기초자산 티커.
+    data_type: LowCardinality(String)
+  - name: binance_base
+    description: 바이낸스 쪽 기초자산 티커. `upbit_base` 와 다를 수 있다(별칭).
+    data_type: LowCardinality(String)
+  - name: english_name
+    description: 코인 영문명(업비트 기준).
+    data_type: String
+  - name: korean_name
+    description: 코인 한글명(업비트 기준).
+    data_type: String
+  - name: upbit_active
+    description: 지금 업비트 원화 마켓에 있나(1/0).
+    data_type: UInt8
+  - name: binance_active
+    description: 지금 바이낸스 USDT 마켓에 있나(1/0).
+    data_type: UInt8
+  - name: on_both_venues
+    description: 양쪽에 다 있나(1/0). **교차 거래소 신호는 이 값이 1인 코인에서만 성립한다.**
+    data_type: UInt8
+  - name: upbit_listing_date_est
+    description: 업비트 상장일 **근사치**. 일봉 첫 등장일로 역산한 값이라 실제 상장일과 며칠 다를 수 있다.
+    data_type: Nullable(Date)
+  - name: has_alias
+    description: 별칭 매핑을 거쳐 이어졌나(1/0). 1이면 티커가 서로 다르다는 뜻.
+    data_type: UInt8
+  config:
+    contract:
+      enforced: true
+- name: dim_markets
+  description: '**한 행 = 업비트 원화 마켓 하나(현재 목록 기준).** 마켓 마스터 + 우리가 처음/마지막 본 체결 시각 + 현재 상태. **주의: 폐지된 마켓은 여기서 사라진다** - 거래소 목록(`upbit_market_master`)이 현재 목록만 담기 때문이다. 과거 마켓을 보려면 `dim_market_state_scd` 를 봐야 한다(docs/34
+    #9).
+
+    '
+  columns:
+  - name: market
+    description: 업비트 마켓 코드.
+    tests:
+    - not_null
+    - unique
+    data_type: LowCardinality(String)
+  - name: korean_name
+    description: 한글명.
+    data_type: String
+  - name: english_name
+    description: 영문명.
+    data_type: String
+  - name: market_warning
+    description: 거래소 경보 표시(CAUTION/NONE). 상세 플래그는 `active_flags` 와 `dim_market_flag_scd`.
+    data_type: LowCardinality(String)
+  - name: listing_date_est
+    description: 상장일 근사치(일봉 첫 등장). 정확한 상장일이 아니다.
+    data_type: Nullable(Date)
+  - name: listing_date_source
+    description: 상장일을 무엇으로 추정했나. `daily_candle_first` 등.
+    data_type: LowCardinality(String)
+  - name: lookback_days
+    description: 상장일 추정에 사용한 일봉 조회 범위(일).
+    data_type: UInt16
+  - name: first_seen_ours
+    description: '**우리가** 그 마켓의 체결을 처음 본 시각. 상장일이 아니다.'
+    data_type: Nullable(DateTime64(3))
+  - name: last_seen_ours
+    description: 우리가 마지막으로 본 체결 시각. 오래됐다면 거래가 없거나 수집이 빠진 것.
+    data_type: Nullable(DateTime64(3))
+  - name: seen_gap_days
+    description: 우리 첫 체결일 − 상장일(일). **BFC 사고(상장 후 6일 무수집)가 이 숫자로 남는다.**
+    data_type: Nullable(Int64)
+  - name: coverage_gap_days
+    description: '전 마켓 수집을 시작한 2026-09-09 **이후 상장분에만** 의미가 있는 공백 일수. 그 전 상장분은 우리 수집 시작일이 첫 체결이라 190 같은 값이 나오므로 NULL 로 둔다.
+
+      '
+    data_type: Nullable(Int64)
+  - name: active_flags
+    description: 현재 켜져 있는 경보 플래그 배열.
+    data_type: Array(String)
+  - name: market_state
+    description: 현재 거래 상태(ACTIVE/PREDELISTING/…). 폴링 시작 전 사라진 마켓은 `UNKNOWN`.
+    data_type: String
+  - name: delisting_date
+    description: 폐지 예정일. 없으면 NULL.
+    data_type: Nullable(Date)
+  - name: is_tradable
+    description: 지금 거래 가능한가(1/0). **커버리지 판정에서 이 값이 0이면 제외한다**(폐지·정지는 유실이 아니다).
+    data_type: UInt8
+  - name: is_active
+    description: 거래소 현재 목록에 있나(1/0).
+    data_type: UInt8
+  - name: fetched_at
+    description: 마스터를 마지막으로 받아온 시각.
+    data_type: DateTime
+  config:
+    contract:
+      enforced: true
+- name: dim_market_state_scd
+  description: '**한 행 = (마켓, 상태 구간) 하나 - SCD type 2.** "이 마켓이 언제부터 언제까지 어떤 상태였나"에 답한다. 원천은 10분 폴링(`poll_market_state.py`). 이 정보는 **웹소켓 ticker 에만 있고 REST 에는 없다**(docs/34 #9). **한계**: 첫 구간의 `valid_from` 은
+    관측 시작(2026-09-20)이라 ''적어도 그때부터''이지 ''그때부터''가 아니다.
+
+    '
+  columns:
+  - name: market
+    description: 업비트 마켓 코드.
+    tests:
+    - not_null
+    data_type: LowCardinality(String)
+  - name: market_state
+    description: 거래소가 주는 상태. ACTIVE(정상) / PREDELISTING(폐지 예정, **아직 거래된다**) / DELISTED / PREVIEW(상장 예정, 실물 미관측).
+    tests:
+    - not_null
+    - accepted_values:
+        values:
+        - ACTIVE
+        - PREDELISTING
+        - DELISTED
+        - PREVIEW
+        - UNKNOWN
+    data_type: LowCardinality(String)
+  - name: is_trading_suspended
+    description: 거래 정지 여부(1/0).
+    data_type: UInt8
+  - name: delisting_date
+    description: 폐지 예정일. 거래소가 `{year, month, day}` 객체로 주는 것을 날짜로 바꾼 값.
+    data_type: Nullable(Date)
+  - name: kind
+    description: 이 구간이 어떻게 관측됐나. `snapshot`(폴러 시작) / `transition`(상태 변화) / **`gone`(거래소 목록에서 사라진 순간 = 폐지 실행)**.
+    data_type: LowCardinality(String)
+  - name: valid_from
+    description: 구간 시작(UTC).
+    tests:
+    - not_null
+    data_type: DateTime
+  - name: valid_to
+    description: 구간 끝(UTC). 현재 구간이면 NULL.
+    data_type: Nullable(DateTime)
+  - name: is_current
+    description: 지금 구간인가(1/0). **마켓당 정확히 하나여야 한다**(단일 테스트로 강제).
+    data_type: UInt8
+  - name: is_tradable
+    description: '거래 가능한가(1/0). 하류가 보는 단 하나의 열. **PREDELISTING 은 1이다** - 폐지일까지는 거래되므로, 여기서 빼면 그 기간의 진짜 유실을 놓친다.
+
+      '
+    tests:
+    - not_null
+    data_type: UInt8
+  config:
+    contract:
+      enforced: true
+- name: dim_market_flag_scd
+  description: '**한 행 = (마켓, 플래그, 지정 구간) 하나 - SCD type 2.** 업비트 시장경보가 언제부터 언제까지 걸려 있었나. 두 원천을 합친다: 거래소 공개 이력(2026-03-23~, 주의 5종)과 우리 1분 폴링(2026-09-16~, WARNING 은 여기에만 있다). **이상탐지 규칙 평가의 정답 라벨**이 이 표다.
+
+    '
+  columns:
+  - name: market
+    description: 업비트 마켓 코드.
+    tests:
+    - not_null
+    data_type: LowCardinality(String)
+  - name: flag
+    description: 경보 종류. WARNING(유의) 또는 주의 5종(PRICE_FLUCTUATIONS·TRADING_VOLUME_SOARING·DEPOSIT_AMOUNT_SOARING·GLOBAL_PRICE_DIFFERENCES·CONCENTRATION_OF_SMALL_ACCOUNTS).
+    tests:
+    - not_null
+    data_type: LowCardinality(String)
+  - name: level
+    description: 경보 수준. 거래소 이력의 값 또는 폴링 관측을 뜻하는 `polled`.
+    data_type: String
+  - name: valid_from
+    description: 지정 시작(UTC). 폴링 출처의 첫 구간은 '적어도 그때부터'다.
+    tests:
+    - not_null
+    data_type: DateTime
+  - name: valid_to
+    description: 해제 시각(UTC). 아직 지정 중이면 NULL.
+    data_type: Nullable(DateTime)
+  - name: source
+    description: '`exchange_records`(거래소 공개 이력) 또는 `polled`(우리 폴링). **주의 5종은 거래소 이력이 더 길고 정확하므로 폴링분은 WARNING 만 채택한다.**'
+    data_type: String
+  - name: is_current
+    description: 지금 지정 중인가(1/0).
+    data_type: Nullable(UInt8)
+  - name: duration_min
+    description: 지정 지속 시간(분). 해제 전이면 NULL.
+    data_type: Nullable(Int64)
+  config:
+    contract:
+      enforced: true
+- name: dim_exchange_notices
+  description: '**한 행 = 거래소 공지 하나.** 수집 공백이 점검인지 유실인지 가르는 근거(docs/37). **분류를 카테고리로 하지 않는 이유**: 업비트 `category=''점검''` 은 대부분 신분증·원화 입출금이라 **거래를 멈추지 않는다**(실측 1,200건). 거래가 멈추는 것은 제목 `서버 점검 안내`(전 마켓)와 `… 거래
+    지원 일시 중단`(코인별)뿐이다.
+
+    '
+  columns:
+  - name: notice_id
+    description: 거래소 공지 번호. 공지는 사후 갱신되므로 같은 번호의 최신본만 남긴다(RMT).
+    tests:
+    - not_null
+    - unique
+    data_type: UInt32
+  - name: listed_at
+    description: 공지 게시 시각(UTC 로 저장).
+    data_type: DateTime
+  - name: category
+    description: 거래소가 붙인 분류. **이것만 믿으면 안 된다**(위 설명 참고).
+    data_type: LowCardinality(String)
+  - name: title
+    description: 공지 제목. 분류의 실제 근거.
+    data_type: String
+  - name: scope
+    description: '영향 범위. `exchange_wide`(서버 점검 = 전 마켓 정지) / `market`(코인별 거래지원 중단) / `deposit_withdrawal`(입출금만, **거래는 계속된다**) / `other`.
+
+      '
+    tests:
+    - not_null
+    - accepted_values:
+        values:
+        - exchange_wide
+        - market
+        - deposit_withdrawal
+        - other
+    data_type: String
+  - name: url
+    description: 공지 원문 링크.
+    data_type: String
+  - name: halts_trading
+    description: 이 공지가 거래를 멈추나(1/0). `scope` 가 exchange_wide 또는 market 이면 1.
+    tests:
+    - not_null
+    data_type: UInt8
+  - name: tickers
+    description: 제목 괄호에서 뽑은 티커 배열. 코인별 중단을 마켓에 연결하는 열쇠.
+    data_type: Array(String)
+  - name: window_start_utc
+    description: '점검 시작(UTC). **전체 점검에만 채운다** - 본문 시각 중 최소가 시작, 최대가 재개라는 규칙으로 뽑았다(3건 전부 확인). 코인별 중단은 본문에 재개 시각만 있는 경우가 있어 **창을 지어내지 않는다**(NULL).
+
+      '
+    data_type: Nullable(DateTime)
+  - name: window_end_utc
+    description: 거래 재개(UTC). 위와 같은 규칙.
+    data_type: Nullable(DateTime)
+  - name: body_head
+    description: 본문 앞부분 300자. 판단 근거를 사람이 바로 볼 수 있게.
+    data_type: String
+  config:
+    contract:
+      enforced: true
