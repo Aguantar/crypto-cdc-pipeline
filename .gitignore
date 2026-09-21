@@ -1,0 +1,55 @@
+# ── 비밀·자격증명 ──────────────────────────────────────────
+.env
+secrets/
+
+# ── 데이터·런타임 산출물 (저장소에 들어갈 이유가 없다) ────
+mysql_data/
+kafka*_data/
+airflow/logs/
+out/
+flink/target/
+dbt_cdc_pipeline/target/
+dbt_cdc_pipeline/logs/
+dbt_cdc_pipeline/.user.yml
+__pycache__/
+*.pyc
+*.log
+*.tar.gz
+
+# ── 편집기·OS ─────────────────────────────────────────────
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# ── 문서: 선별 공개 ───────────────────────────────────────
+# 저장소에는 **결과와 근거**만 둔다. 과정 기록·작업 로그·블로그 원고는
+# 로컬에 남긴다 — 읽는 사람에게 필요한 것은 "무엇을 어떻게 검증했나"이지
+# 내가 그날 무엇을 했나가 아니다. (옛 저장소는 48개 전부를 공개했었다)
+docs/*
+!docs/08-ingest-lag-incident.md
+!docs/13-sequential-id-collision-incident.md
+!docs/19-loss-prevention-gap-map.md
+!docs/23-load-experiment-results.md
+!docs/24-broker-reduction-design.md
+!docs/32-slo-and-alerting.md
+!docs/35-data-inventory.md
+!docs/36-metrics.md
+
+# ── 로컬 전용 문서·이미지 ─────────────────────────────────
+blog-post-*.md
+airflow0*.md
+airflow_integration_plan.md
+*.png
+cdc-dbt-analytics-dashboard.json
+
+# ── 이 프로젝트 것이 아닌 것 ──────────────────────────────
+# n8n 인스턴스에는 다른 프로젝트 워크플로가 같이 들어 있다. 이 저장소에는
+# CDC 관련 것만 둔다(고객사·타 프로젝트 이름이 공개 저장소에 들어갈 이유가 없다).
+n8n/workflows/*
+!n8n/workflows/README.md
+!n8n/workflows/CDC_Pipeline_-_Anomaly_Health_Monitor.oracle.json
+
+# 대시보드 백업·옛 판본
+grafana/archive/
+*.bak.*
