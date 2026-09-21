@@ -1,0 +1,136 @@
+{
+  "title": "Upbit 체결 CDC (Debezium, schemas.enable=false)",
+  "note": "키는 {\"market\": \"KRW-...\"} (docs/29 창1). skipped.operations=d 라 op='d' 는 오지 않는다.",
+  "type": "object",
+  "required": [
+    "after",
+    "source",
+    "op",
+    "ts_ms"
+  ],
+  "properties": {
+    "before": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "after": {
+      "type": "object",
+      "required": [
+        "trade_id",
+        "market",
+        "trade_price",
+        "trade_volume",
+        "ask_bid",
+        "upbit_timestamp",
+        "sequential_id"
+      ],
+      "properties": {
+        "trade_id": {
+          "type": "integer"
+        },
+        "market": {
+          "type": "string"
+        },
+        "trade_price": {
+          "type": "string",
+          "note": "decimal.handling.mode=string — 정밀도가 문자열로 온다. double 로 받지 말 것(docs/34 #5)"
+        },
+        "trade_volume": {
+          "type": "string"
+        },
+        "trade_amount": {
+          "type": "string",
+          "note": "MySQL DECIMAL(20,4) — 먼지 체결은 0. 파이프라인은 price×volume 을 쓴다"
+        },
+        "ask_bid": {
+          "type": "string",
+          "enum": [
+            "ASK",
+            "BID"
+          ]
+        },
+        "upbit_timestamp": {
+          "type": "integer"
+        },
+        "sequential_id": {
+          "type": "integer"
+        },
+        "recv_ms": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "created_at": {
+          "type": [
+            "string",
+            "integer"
+          ]
+        },
+        "best_ask_price": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "best_ask_size": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "best_bid_price": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "best_bid_size": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ingest_source": {
+          "type": "string",
+          "enum": [
+            "ws",
+            "gapfill",
+            "backfill"
+          ]
+        },
+        "stream_type": {
+          "type": "string",
+          "enum": [
+            "REALTIME",
+            "SNAPSHOT"
+          ]
+        }
+      }
+    },
+    "source": {
+      "type": "object",
+      "required": [
+        "ts_ms"
+      ],
+      "properties": {
+        "ts_ms": {
+          "type": "integer"
+        }
+      }
+    },
+    "op": {
+      "type": "string",
+      "enum": [
+        "c",
+        "r",
+        "u"
+      ]
+    },
+    "ts_ms": {
+      "type": "integer"
+    }
+  }
+}

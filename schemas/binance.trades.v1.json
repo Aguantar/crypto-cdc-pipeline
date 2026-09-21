@@ -1,0 +1,51 @@
+{
+  "title": "Binance 체결 (수집기 → Kafka 직행, 원문 + recv_ms)",
+  "note": "p·q 는 문자열이다(정밀도). 키는 symbol.",
+  "type": "object",
+  "required": [
+    "e",
+    "E",
+    "s",
+    "t",
+    "p",
+    "q",
+    "T",
+    "m",
+    "recv_ms"
+  ],
+  "properties": {
+    "e": {
+      "type": "string",
+      "enum": [
+        "trade"
+      ]
+    },
+    "E": {
+      "type": "integer"
+    },
+    "s": {
+      "type": "string"
+    },
+    "t": {
+      "type": "integer"
+    },
+    "p": {
+      "type": "string"
+    },
+    "q": {
+      "type": "string"
+    },
+    "T": {
+      "type": "integer"
+    },
+    "m": {
+      "type": "boolean"
+    },
+    "M": {
+      "type": "boolean"
+    },
+    "recv_ms": {
+      "type": "integer"
+    }
+  }
+}

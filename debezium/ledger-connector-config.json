@@ -1,0 +1,27 @@
+{
+    "name": "ledger-cdc-connector",
+    "config": {
+        "connector.class": "io.debezium.connector.mysql.MySqlConnector",
+        "tasks.max": "1",
+        "database.hostname": "cdc-mysql",
+        "database.port": "3306",
+        "database.user": "debezium",
+        "database.password": "${MYSQL_PASSWORD}",
+        "database.server.id": "184055",
+        "topic.prefix": "ledger",
+        "database.include.list": "crypto_db",
+        "table.include.list": "crypto_db.virtual_orders,crypto_db.virtual_fills,crypto_db.virtual_positions,crypto_db.binance_user_events,crypto_db.ledger_reconcile,crypto_db.cases",
+        "schema.history.internal.kafka.bootstrap.servers": "kafka-1:29092",
+        "schema.history.internal.kafka.topic": "_schema-history-ledger",
+        "include.schema.changes": "false",
+        "snapshot.mode": "initial",
+        "key.converter": "org.apache.kafka.connect.json.JsonConverter",
+        "key.converter.schemas.enable": "false",
+        "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+        "value.converter.schemas.enable": "false",
+        "tombstones.on.delete": "false",
+        "decimal.handling.mode": "string",
+        "time.precision.mode": "connect",
+        "_comment": "2026-09-19 docs/28 B: 체결 커넥터(skipped.operations=d, 보관소)와 달리 삭제를 살린다(거울). 같은 binlog 를 두 커넥터가 각자 오프셋으로 읽는다. 톰스톤은 ClickHouse Kafka 엔진이 null 값을 못 다뤄 끈다 — 삭제는 op=d 행으로 충분."
+    }
+}

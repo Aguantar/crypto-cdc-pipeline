@@ -1,0 +1,72 @@
+{
+  "title": "Upbit 호가 스냅샷 (수집기 → Kafka 직행, SIMPLE 포맷)",
+  "note": "항상 전체 스냅샷(delta 없음). rts 는 수집기 수신 시각.",
+  "type": "object",
+  "required": [
+    "ty",
+    "cd",
+    "tms",
+    "obu",
+    "st",
+    "rts"
+  ],
+  "properties": {
+    "ty": {
+      "type": "string",
+      "enum": [
+        "orderbook"
+      ]
+    },
+    "cd": {
+      "type": "string"
+    },
+    "tms": {
+      "type": "integer"
+    },
+    "tas": {
+      "type": "number"
+    },
+    "tbs": {
+      "type": "number"
+    },
+    "obu": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "ap",
+          "bp",
+          "as",
+          "bs"
+        ],
+        "properties": {
+          "ap": {
+            "type": "number"
+          },
+          "bp": {
+            "type": "number"
+          },
+          "as": {
+            "type": "number"
+          },
+          "bs": {
+            "type": "number"
+          }
+        }
+      }
+    },
+    "st": {
+      "type": "string",
+      "enum": [
+        "REALTIME",
+        "SNAPSHOT"
+      ]
+    },
+    "lv": {
+      "type": "number"
+    },
+    "rts": {
+      "type": "integer"
+    }
+  }
+}

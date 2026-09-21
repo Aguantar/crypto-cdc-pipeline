@@ -1,0 +1,94 @@
+{
+  "title": "Binance 호가 증분 + 주기 스냅샷 (같은 토픽·같은 키)",
+  "note": "증분은 U/u 순번, 수량 0 은 그 가격 레벨 삭제. 스냅샷은 수집기가 5분마다 REST 로 떠 넣는다(e='snapshot').",
+  "oneOf": [
+    {
+      "type": "object",
+      "required": [
+        "e",
+        "E",
+        "s",
+        "U",
+        "u",
+        "b",
+        "a",
+        "recv_ms"
+      ],
+      "properties": {
+        "e": {
+          "type": "string",
+          "enum": [
+            "depthUpdate"
+          ]
+        },
+        "E": {
+          "type": "integer"
+        },
+        "s": {
+          "type": "string"
+        },
+        "U": {
+          "type": "integer"
+        },
+        "u": {
+          "type": "integer"
+        },
+        "b": {
+          "type": "array",
+          "items": {
+            "type": "array"
+          }
+        },
+        "a": {
+          "type": "array",
+          "items": {
+            "type": "array"
+          }
+        },
+        "recv_ms": {
+          "type": "integer"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "e",
+        "s",
+        "lastUpdateId",
+        "bids",
+        "asks",
+        "recv_ms"
+      ],
+      "properties": {
+        "e": {
+          "type": "string",
+          "enum": [
+            "snapshot"
+          ]
+        },
+        "s": {
+          "type": "string"
+        },
+        "lastUpdateId": {
+          "type": "integer"
+        },
+        "bids": {
+          "type": "array",
+          "items": {
+            "type": "array"
+          }
+        },
+        "asks": {
+          "type": "array",
+          "items": {
+            "type": "array"
+          }
+        },
+        "recv_ms": {
+          "type": "integer"
+        }
+      }
+    }
+  ]
+}

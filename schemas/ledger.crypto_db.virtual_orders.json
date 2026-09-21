@@ -1,0 +1,68 @@
+{
+  "title": "2층 원장 주문 CDC (거울 모드 — UPDATE·DELETE 가 온다)",
+  "note": "체결 토픽과 달리 op='d' 를 살린다(tombstones.on.delete=false 라 값은 before 에).",
+  "type": "object",
+  "required": [
+    "after",
+    "source",
+    "op",
+    "ts_ms"
+  ],
+  "properties": {
+    "before": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "after": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "order_id": {
+          "type": "integer"
+        },
+        "symbol": {
+          "type": "string"
+        },
+        "client_order_id": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "version": {
+          "type": "integer"
+        },
+        "executed_qty": {
+          "type": "string"
+        }
+      }
+    },
+    "source": {
+      "type": "object",
+      "required": [
+        "ts_ms"
+      ],
+      "properties": {
+        "ts_ms": {
+          "type": "integer"
+        }
+      }
+    },
+    "op": {
+      "type": "string",
+      "enum": [
+        "c",
+        "r",
+        "u",
+        "d"
+      ]
+    },
+    "ts_ms": {
+      "type": "integer"
+    }
+  }
+}

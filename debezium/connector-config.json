@@ -1,0 +1,29 @@
+{
+    "name": "mysql-cdc-connector",
+    "config": {
+        "connector.class": "io.debezium.connector.mysql.MySqlConnector",
+        "tasks.max": "1",
+        "database.hostname": "cdc-mysql",
+        "database.port": "3306",
+        "database.user": "debezium",
+        "database.password": "${MYSQL_PASSWORD}",
+        "database.server.id": "184054",
+        "topic.prefix": "cdc",
+        "database.include.list": "crypto_db",
+        "table.include.list": "crypto_db.crypto_trades",
+        "schema.history.internal.kafka.bootstrap.servers": "kafka-1:29092",
+        "schema.history.internal.kafka.topic": "_schema-history",
+        "include.schema.changes": "true",
+        "snapshot.mode": "initial",
+        "key.converter": "org.apache.kafka.connect.json.JsonConverter",
+        "key.converter.schemas.enable": "false",
+        "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+        "value.converter.schemas.enable": "false",
+        "tombstones.on.delete": "false",
+        "decimal.handling.mode": "string",
+        "time.precision.mode": "connect",
+        "skipped.operations": "d",
+        "message.key.columns": "crypto_db.crypto_trades:market",
+        "_comment": "2026-09-19 라이브와 동기화: 브로커 1대(docs/24), 삭제 이벤트 스킵(docs/26 §3, 보관소 모드), 키=market(docs/29 창1). 원장 커넥터는 ledger-connector-config.json (거울 모드)."
+    }
+}
