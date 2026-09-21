@@ -1,0 +1,102 @@
+version: 2
+
+sources:
+  - name: raw
+    description: "Flink가 적재한 ClickHouse raw 데이터"
+    database: cdc_pipeline
+    schema: cdc_pipeline
+    tables:
+      - name: orderbook_1m
+        description: "호가 분 집계(Flink OrderbookJob) - mid·스프레드(bp)·잔량 불균형(1/5/15호가)·15호가 깊이(수량). 체결×호가 마트의 호가 쪽 재료"
+      - name: orderbook_raw
+        description: 호가 스냅샷 원본(수집기 → Kafka → Flink). 원장이 없는 되돌릴 수 없는 데이터 - 유실은 dq_orderbook_gaps_daily 로 센다
+      - name: crypto_trades
+        description: "Upbit 코인 실시간 체결 데이터 (Flink raw sink)"
+        # freshness: 파이프라인이 살아 있으면 inserted_at 이 수분 내. 60분 넘게 멈추면 error (health_check 10분 주기와 별개로 dbt 산출물에 기록)
+        loaded_at_field: inserted_at
+        freshness:
+          warn_after: {count: 15, period: minute}
+          error_after: {count: 60, period: minute}
+        columns:
+          - name: trade_id
+            description: "MySQL AUTO_INCREMENT PK"
+            tests:
+              - not_null
+          - name: market
+            description: "마켓 코드 (KRW-BTC, KRW-ETH 등)"
+            tests:
+              - not_null
+          - name: trade_price
+            description: "체결 가격 (KRW)"
+          - name: trade_volume
+            description: "체결 수량"
+          - name: trade_amount
+            description: "체결 금액 (price × volume)"
+          - name: ask_bid
+            description: "ASK(매도) / BID(매수)"
+          - name: upbit_timestamp
+            description: "Upbit 체결 시각 (Unix ms, Int64)"
+          - name: sequential_id
+            description: "Upbit 체결 고유 ID"
+          - name: source_ts
+            description: "MySQL INSERT 시각"
+          - name: cdc_ts
+            description: "Debezium 처리 시각"
+          - name: cdc_latency_ms
+            description: "CDC 레이턴시 (ms)"
+          - name: flink_ts
+            description: "Flink 처리 시각"
+          - name: inserted_at
+            description: "ClickHouse 적재 시각"
+
+
+      # 2층 원장 (docs/28 B, 2026-09-19): MySQL 거울/보관소 → Debezium(ledger.*) → Kafka 엔진 MV → RMT(version, is_deleted). 조회는 FINAL.
+      - name: virtual_orders
+        description: "가상 매매 주문(거울 모드). 상태 전이는 Binance Testnet 매칭 엔진이 만든다. FINAL 로 최종 상태, is_deleted=1 은 테스트넷 리셋 삭제"
+      - name: virtual_fills
+        description: "가상 매매 체결(보관소 모드, 불변). 리셋 시 is_deleted"
+      - name: virtual_positions
+        description: "잔고 스냅샷(시간당·리셋 감지용)"
+      - name: binance_user_events
+        description: "거래소 유저 스트림 원문(executionReport 등). 재구성·3자 대조의 정답 원천"
+      - name: ledger_reconcile
+        description: "생성기가 시간당 기록한 거래소(REST) vs MySQL 대조. dq_ledger_daily 가 ClickHouse 수를 붙여 3자 완성"
+      - name: cases
+        description: "케이스(거울 모드). cases_hourly 가 열고 사람이 status·verdict 를 바꾼다 - 그 UPDATE 가 CDC 로 온다. FINAL 로 최신"
+      - name: binance_trades
+        description: "Binance USDT 전 심볼 체결(docs/31). 시세이지 원장 아님. RMT(recv_ms) - 재연결 중복은 FINAL 로. TTL 30일"
+
+      - name: anomaly_alerts
+        description: "v1 이상탐지 산출물 - 2026-09-17 규칙 삭제로 **적재 중단**. 이력 전용(TTL 365일, 2027-09 자동 소멸). 현재 규칙 산출물은 market_alerts"
+
+  - name: reference
+    description: "외부 참조값(업비트 REST·경보 이력). Airflow/cron 이 적재, dbt 는 읽기만."
+    database: cdc_pipeline
+    schema: cdc_pipeline
+    tables:
+      - name: upbit_hourly_candles
+        description: "업비트 시간봉 (거래소 진실값). reconcile_trades DAG 가 매일 전날 24봉 적재. ReplacingMergeTree → FINAL 로 읽는다."
+        loaded_at_field: fetched_at
+        freshness:
+          warn_after: {count: 30, period: hour}
+          error_after: {count: 50, period: hour}
+      - name: upbit_daily_candles
+        description: "업비트 일봉 200일 (경보 백테스트 피처, docs/16)."
+      - name: upbit_market_event_records
+        description: "업비트 시장경보 지정/해제 이력 (이상탐지 정답 라벨, docs/16). 매시 증분 동기화."
+      - name: upbit_market_events
+        description: "거래소 시장경보 플래그 전이(1분 폴링, poll_market_events.py). 마켓·플래그별 최신 state 가 현재 지정 상태"
+      - name: upbit_market_state_events
+        description: "마켓 거래 상태 전이(10분 폴링, poll_market_state.py). ACTIVE/PREDELISTING/DELISTED + 폐지 예정일. 웹소켓 ticker 에만 있는 정보 - REST 에는 없다"
+      - name: exchange_notices
+        description: "거래소 공지 원문 보관소(매시 폴링, poll_exchange_notices.py). 공지는 사후 갱신되므로 RMT. 수집 공백이 점검인지 유실인지 가르는 근거"
+      - name: binance_symbols
+        description: "Binance exchangeInfo 스냅샷(base/quote/status). dim_coins 원천. reconcile_binance 가 일 1회"
+      - name: binance_hourly_candles
+        description: "Binance REST 1h 캔들(체결 수 n 포함). reconcile_binance 가 일 1회 적재 - Binance 대조의 정답"
+      - name: upbit_market_master
+        description: "마켓 마스터 스냅샷(이름·경보 플래그·상장일 근사). reconcile_trades DAG 가 매일 적재, ReplacingMergeTree → FINAL"
+      - name: market_alerts
+        description: "이상탐지 v2 출력(마켓 등급 전이). PRICE_24H 는 Flink(섀도), VOLUME_24H 는 dbt. 승격 전까지 발송 없음 (docs/22)."
+      - name: ingest_repairs
+        description: "유입 공백 수리 계보(창 단위): producer gap-fill(reconnect/startup)·수동 백필(manual). 대조 결과와 조인해 '수리된 구간'을 표시한다 (docs/19 #14)."

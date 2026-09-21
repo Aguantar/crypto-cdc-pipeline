@@ -1,0 +1,112 @@
+version: 2
+
+models:
+  - name: stg_trades
+    description: >
+      **한 행 = Upbit 체결 하나.** 원본 `crypto_trades` 를 읽는 **유일한 입구**다(docs/40 ①).
+      여기서 하는 일: ① RMT 중복 제거(FINAL) ② 삭제 이벤트 제외 ③ 가격·수량 0 제외 ④ KST·UTC 시간 축 제공.
+      **모든 하류는 원본이 아니라 이 모델을 읽는다** - 술어가 모델마다 달라 같은 날에 다른 답이 나오던 문제를 막기 위해서다.
+      뷰라서 저장 비용이 없고, 필요한 열은 여기서 다 내준다(우회할 이유를 없앤다).
+
+      **옛 주의 문구 정정(2026-09-20)**: 예전 설명에 "2026-02 지표는 재소비 중복 ~15.4% 를 포함한 과대집계"라고 적혀 있었다.
+      09-18 ReplacingMergeTree 전환(docs/25)과 읽기 시점 FINAL 로 **이미 해소됐다.**
+      실측(2026-02-14 00~06시): FINAL 유무와 무관하게 127,445행 = 고유키 127,445개. 더 이상 dedup 서브쿼리가 필요하지 않다.
+    columns:
+      - name: trade_id
+        description: "업비트 체결 번호. 마켓 간에는 겹칠 수 있으므로 단독 키가 아니다(docs/13)."
+        tests: [not_null]
+      - name: market
+        description: "업비트 마켓 코드."
+        tests: [not_null]
+      - name: trade_price
+        description: "체결가(Decimal). 정밀도는 원천에 있고 파이프라인이 버리지 않는다(docs/34 #5)."
+        tests: [not_null]
+      - name: trade_volume
+        description: "체결 수량(Decimal)."
+      - name: trade_amount
+        description: "체결 금액 = 가격 × 수량을 **Decimal 로 계산한 값**. MySQL 의 DECIMAL(20,4) 를 그대로 쓰지 않는 이유는 먼지 체결이 0 이 되기 때문."
+      - name: ask_bid
+        description: "거래소 원문 값. **테이커 방향**을 뜻한다."
+      - name: taker_side
+        description: "`ask_bid` 와 같은 값에 의미가 드러나는 이름을 준 열. Binance 의 `taker_side` 와 같은 뜻으로 비교 가능하다(docs/34 #4)."
+      - name: trade_time_kst
+        description: "거래소 체결 시각(KST)."
+      - name: day_kst
+        description: "**체결 기준 KST 하루.** 리포트·OHLCV 가 쓰는 하루."
+      - name: trade_hour
+        description: "체결 시각의 KST 시(0~23)."
+      - name: sequential_id
+        description: "업비트 체결 일련번호. `(market, sequential_id)` 가 자연키다."
+      - name: cdc_latency_ms
+        description: "CDC 구간 지연(ms)."
+      - name: inserted_at
+        description: "ClickHouse 행 생성 시각."
+      - name: op
+        description: "CDC 연산. `c`(INSERT) / `r`(최초 스냅샷) / `backfill`(공백 복구) / `d`(삭제, **여기서 제외됨**). 진단용으로 남겨 둔다."
+      - name: source_ts
+        description: "MySQL binlog 시각. **적재 지연 계산의 기준이며 체결 시각이 아니다.**"
+      - name: cdc_ts
+        description: "Debezium 이 이벤트를 만든 시각."
+      - name: flink_ts
+        description: "Flink 가 ClickHouse 에 넣은 시각. **재처리하면 이 값이 '다시 적재한 시각'이 된다**(docs/34 #6)."
+      - name: recv_ms
+        description: "수집기가 메시지를 받은 시각(ms). 경로에 따라 NULL."
+      - name: ingest_source
+        description: "수집 경로(웹소켓/REST 등)."
+      - name: stream_type
+        description: "스트림 종류(실시간/스냅샷)."
+      - name: best_bid_price
+        description: "체결 순간의 최우선 매수호가. 없을 수 있다(NULL)."
+      - name: best_bid_size
+        description: "그 호가의 잔량."
+      - name: best_ask_price
+        description: "체결 순간의 최우선 매도호가."
+      - name: best_ask_size
+        description: "그 호가의 잔량."
+      - name: upbit_timestamp
+        description: "거래소 체결 시각(Unix ms). 분·시 버킷은 읽는 쪽이 만든다."
+      - name: trade_time_utc
+        description: "거래소 체결 시각(UTC)."
+      - name: trade_day_utc
+        description: >
+          **체결 기준 UTC 하루.** 이름에 `trade_` 를 붙인 이유: 하류에 `toDate(source_ts) AS day_utc`(적재 기준)가 있어
+          ClickHouse 의 '별칭이 원본 열을 가린다' 함정에 걸린다(docs/34 #3). 이름이 다르면 그 함정 자체가 없다.
+      - name: trade_hour_utc
+        description: "체결 기준 UTC 시간 버킷."
+
+  - name: stg_binance_trades
+    description: >
+      **한 행 = Binance 체결 하나.** 원본 `binance_trades` 를 읽는 유일한 입구.
+      FINAL 로 재연결 중복을 제거하고, **테이커 방향을 Upbit 과 같은 뜻으로 뒤집어** 준다.
+    columns:
+      - name: symbol
+        description: "바이낸스 심볼(`XXXUSDT`). 493 USDT 심볼을 수집한다."
+        tests: [not_null]
+      - name: trade_id
+        description: "바이낸스 체결 번호."
+        tests: [not_null]
+      - name: price
+        description: "체결가(Decimal)."
+      - name: qty
+        description: "체결 수량(Decimal)."
+      - name: quote_qty
+        description: "체결 금액(USDT) = 가격 × 수량을 Decimal 로 계산."
+      - name: taker_side
+        description: >
+          테이커 방향(BID/ASK). 거래소는 `is_buyer_maker`(**메이커** 방향)로 주므로 **뒤집어서** 저장한다.
+          이 변환이 없으면 Upbit 과 부호가 반대가 된다(docs/34 #4).
+        tests:
+          - accepted_values:
+              values: ['ASK', 'BID']
+      - name: trade_ts
+        description: "거래소 체결 시각(UTC)."
+      - name: trade_ms
+        description: "거래소 체결 시각(Unix ms)."
+      - name: recv_ms
+        description: "수집기가 받은 시각(ms). `trade_ms` 와의 차이가 수집 지연이다."
+      - name: flink_ts
+        description: "ClickHouse 적재 시각."
+      - name: trade_hour_utc
+        description: "체결 기준 UTC 시간 버킷."
+      - name: trade_day_utc
+        description: "체결 기준 UTC 하루."
