@@ -1,0 +1,61 @@
+mappings:
+  # DAG 실행 시간
+  - match: "airflow.dag.*.*.duration"
+    name: "airflow_dag_task_duration"
+    labels:
+      dag_id: "$1"
+      task_id: "$2"
+
+  # 스케줄러 heartbeat
+  - match: "airflow.scheduler_heartbeat"
+    name: "airflow_scheduler_heartbeat"
+
+  # DAG run 지속시간
+  - match: "airflow.dagrun.duration.*.*"
+    name: "airflow_dagrun_duration"
+    labels:
+      status: "$1"
+      dag_id: "$2"
+
+  # Task instance 시작
+  - match: "airflow.ti.start.*.*"
+    name: "airflow_ti_start"
+    labels:
+      dag_id: "$1"
+      task_id: "$2"
+
+  # Task instance 완료
+  - match: "airflow.ti.finish.*.*.*"
+    name: "airflow_ti_finish"
+    labels:
+      dag_id: "$1"
+      task_id: "$2"
+      state: "$3"
+
+  # Executor 관련
+  - match: "airflow.executor.open_slots"
+    name: "airflow_executor_open_slots"
+
+  - match: "airflow.executor.queued_tasks"
+    name: "airflow_executor_queued_tasks"
+
+  - match: "airflow.executor.running_tasks"
+    name: "airflow_executor_running_tasks"
+
+  # Pool 관련
+  - match: "airflow.pool.open_slots.*"
+    name: "airflow_pool_open_slots"
+    labels:
+      pool: "$1"
+
+  - match: "airflow.pool.used_slots.*"
+    name: "airflow_pool_used_slots"
+    labels:
+      pool: "$1"
+
+  # DAG processing
+  - match: "airflow.dag_processing.total_parse_time"
+    name: "airflow_dag_processing_total_parse_time"
+
+  - match: "airflow.dag_processing.processes"
+    name: "airflow_dag_processing_processes"

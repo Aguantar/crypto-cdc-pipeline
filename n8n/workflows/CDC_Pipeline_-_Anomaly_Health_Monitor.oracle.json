@@ -1,0 +1,354 @@
+{
+  "updatedAt": "2026-02-23T06:15:41.354Z",
+  "createdAt": "2026-02-23T05:24:29.009Z",
+  "id": "wSAmy0kCFOuxFCz2",
+  "name": "CDC Pipeline - Anomaly & Health Monitor",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "id": "236cdc45-712d-4881-bda9-50f8cebc5fe9",
+      "name": "Every 1 Minute",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "position": [
+        -928,
+        64
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 1
+            }
+          ]
+        }
+      },
+      "typeVersion": 1.2
+    },
+    {
+      "id": "cc6f2c73-2ff0-448b-851a-3df3e1f4eb81",
+      "name": "ClickHouse - Pipeline Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [
+        -704,
+        64
+      ],
+      "parameters": {
+        "url": "http://cdc-clickhouse:8123/",
+        "body": "SELECT (SELECT count() FROM cdc_pipeline.upbit_market_events WHERE kind = 'transition' AND observed_at >= now() - INTERVAL 1 MINUTE) as anomaly_count, (SELECT count() FROM cdc_pipeline.crypto_trades WHERE source_ts >= now() - INTERVAL 5 MINUTE) as recent_trades, (SELECT count() FROM cdc_pipeline.crypto_trades) as total_trades, (SELECT groupArray(concat(flag, ' ', if(state = 1, '지정', '해제'), ' ', market)) FROM (SELECT flag, state, market FROM cdc_pipeline.upbit_market_events WHERE kind = 'transition' AND observed_at >= now() - INTERVAL 1 MINUTE ORDER BY observed_at DESC LIMIT 10)) as alert_details FORMAT JSON",
+        "method": "POST",
+        "options": {
+          "timeout": 10000
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "authentication": "genericCredentialType",
+        "rawContentType": "text/plain",
+        "genericAuthType": "httpBasicAuth"
+      },
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "chn8nreaderbasic",
+          "name": "ClickHouse n8n_reader (basic)"
+        }
+      },
+      "typeVersion": 4.2
+    },
+    {
+      "id": "2e0efa12-d854-42b1-9a98-ba7a1c830b5d",
+      "name": "Parse & Combine",
+      "type": "n8n-nodes-base.code",
+      "position": [
+        -464,
+        160
+      ],
+      "parameters": {
+        "jsCode": "const resp = $('ClickHouse - Pipeline Status').item.json;\nconst status = resp.data ? resp.data[0] : {};\n\nconst anomalyCount = parseInt(status.anomaly_count || '0');\nconst recentTrades = parseInt(status.recent_trades || '0');\nconst totalTrades = parseInt(status.total_trades || '0');\nconst pipelineStale = recentTrades === 0;\n\nconst details = status.alert_details || [];\nconst alertSummary = details.map(d => '• ' + d).join('\\n');\n\nconst now = new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().replace('T', ' ').substring(0, 19);\n\nconst fmt = (n) => n.toLocaleString('ko-KR');\n\nreturn [{\n  json: {\n    anomaly_count: anomalyCount,\n    anomaly_count_fmt: fmt(anomalyCount),\n    recent_trades: recentTrades,\n    recent_trades_fmt: fmt(recentTrades),\n    total_trades: totalTrades,\n    total_trades_fmt: fmt(totalTrades),\n    pipeline_stale: pipelineStale,\n    alert_summary: alertSummary,\n    timestamp: now,\n    has_anomaly: anomalyCount > 0,\n    has_alert: anomalyCount > 0 || pipelineStale,\n    dashboard_url: 'https://<내-도메인>/d/cdc-pipeline-main/cdc-crypto-realtime-pipeline?orgId=1&refresh=10s'\n  }\n}];"
+      },
+      "typeVersion": 2
+    },
+    {
+      "id": "07ed46a5-174d-4528-84b2-894bb0317bb5",
+      "name": "IF Anomaly Detected",
+      "type": "n8n-nodes-base.if",
+      "position": [
+        -240,
+        64
+      ],
+      "parameters": {
+        "options": {},
+        "conditions": {
+          "options": {
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "anomaly-check",
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              },
+              "leftValue": "={{ $json.has_anomaly }}",
+              "rightValue": true
+            }
+          ]
+        }
+      },
+      "typeVersion": 2.2
+    },
+    {
+      "id": "0d4e5d12-63e4-4fb0-b5f2-68d03725d5e0",
+      "name": "IF Pipeline Stale",
+      "type": "n8n-nodes-base.if",
+      "position": [
+        -240,
+        288
+      ],
+      "parameters": {
+        "options": {},
+        "conditions": {
+          "options": {
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "stale-check",
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              },
+              "leftValue": "={{ $json.pipeline_stale }}",
+              "rightValue": true
+            }
+          ]
+        }
+      },
+      "typeVersion": 2.2
+    },
+    {
+      "id": "c3e6ec3b-1286-43c8-8e59-4db27597489a",
+      "name": "Slack - Anomaly Alert",
+      "type": "n8n-nodes-base.slack",
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "adfe8118-3d4c-4e36-a9e3-998b051ed82b",
+      "parameters": {
+        "text": "=🚨 *FDS 이상거래 탐지!*\n\n최근 1분간: *{{ $json.anomaly_count_fmt }}건*\n최근 5분 거래: {{ $json.recent_trades_fmt }}건\n총 적재 건수: {{ $json.total_trades_fmt }}건\n시간: {{ $json.timestamp }}\n\n*상세 내역:*\n{{ $json.alert_summary }}\n\n📊 <{{ $json.dashboard_url }}|Grafana 대시보드 바로가기>",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "general"
+        },
+        "otherOptions": {}
+      },
+      "credentials": {
+        "slackApi": {
+          "id": "Eav7hNtBFmo7tgNy",
+          "name": "Slack account"
+        }
+      },
+      "typeVersion": 2.3
+    },
+    {
+      "id": "f28a3a9c-9b71-40a6-a1b5-4a6a2af4bba7",
+      "name": "Gmail - Anomaly Alert",
+      "type": "n8n-nodes-base.gmail",
+      "position": [
+        0,
+        128
+      ],
+      "webhookId": "b37e9686-5c8a-44a6-8308-3f823b4966ba",
+      "parameters": {
+        "sendTo": "aguantar7093@gmail.com",
+        "message": "=<h2>🚨 FDS 이상거래 탐지</h2>\n<table border='1' cellpadding='8' cellspacing='0'>\n<tr><td><b>탐지 건수</b></td><td>{{ $json.anomaly_count_fmt }}건</td></tr>\n<tr><td><b>최근 5분 거래</b></td><td>{{ $json.recent_trades_fmt }}건</td></tr>\n<tr><td><b>총 적재 건수</b></td><td>{{ $json.total_trades_fmt }}건</td></tr>\n<tr><td><b>시간</b></td><td>{{ $json.timestamp }}</td></tr>\n</table>\n<h3>상세 내역</h3>\n<pre>{{ $json.alert_summary }}</pre>\n<br>\n<a href='{{ $json.dashboard_url }}'>📊 Grafana 대시보드 바로가기</a>",
+        "options": {},
+        "subject": "=🚨 FDS 이상거래 탐지 - {{ $json.anomaly_count_fmt }}건 ({{ $json.timestamp }})"
+      },
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "EgqaNvIbHEqaVSCF",
+          "name": "Gmail account"
+        }
+      },
+      "typeVersion": 2.1
+    },
+    {
+      "id": "d8c98d96-6db3-4fb8-812a-c924a7096a21",
+      "name": "Slack - Pipeline Stale",
+      "type": "n8n-nodes-base.slack",
+      "position": [
+        -16,
+        304
+      ],
+      "webhookId": "799c9efe-ca3d-4090-8829-cd8472ef909c",
+      "parameters": {
+        "text": "=🔴 *CDC 파이프라인 장애!*\n\n최근 5분간 데이터 유입 없음\n총 적재 건수: {{ $json.total_trades_fmt }}건\n시간: {{ $json.timestamp }}\n\n👉 Flink Job 상태 확인 필요\n📊 <{{ $json.dashboard_url }}|Grafana 대시보드 바로가기>",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "general"
+        },
+        "otherOptions": {}
+      },
+      "credentials": {
+        "slackApi": {
+          "id": "Eav7hNtBFmo7tgNy",
+          "name": "Slack account"
+        }
+      },
+      "typeVersion": 2.3
+    },
+    {
+      "id": "c67813ac-a928-494b-917e-baee87d20cf6",
+      "name": "Gmail - Pipeline Stale",
+      "type": "n8n-nodes-base.gmail",
+      "position": [
+        -16,
+        432
+      ],
+      "webhookId": "a0e86d6a-ff6a-4ee3-8c54-e23ff02397fc",
+      "parameters": {
+        "sendTo": "aguantar7093@gmail.com",
+        "message": "=<h2>🔴 CDC 파이프라인 장애 알림</h2>\n<table border='1' cellpadding='8' cellspacing='0'>\n<tr><td><b>상태</b></td><td style='color:red'><b>데이터 유입 중단</b></td></tr>\n<tr><td><b>최근 5분 거래</b></td><td>0건</td></tr>\n<tr><td><b>총 적재 건수</b></td><td>{{ $json.total_trades_fmt }}건</td></tr>\n<tr><td><b>시간</b></td><td>{{ $json.timestamp }}</td></tr>\n</table>\n<h3>확인 사항</h3>\n<ul>\n<li>Flink Job 상태 확인</li>\n<li>Kafka LAG 확인</li>\n<li>MySQL 접속 확인</li>\n</ul>\n<br>\n<a href='{{ $json.dashboard_url }}'>📊 Grafana 대시보드 바로가기</a>",
+        "options": {},
+        "subject": "=🔴 CDC 파이프라인 장애 - 데이터 유입 중단 ({{ $json.timestamp }})"
+      },
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "EgqaNvIbHEqaVSCF",
+          "name": "Gmail account"
+        }
+      },
+      "typeVersion": 2.1
+    }
+  ],
+  "connections": {
+    "Every 1 Minute": {
+      "main": [
+        [
+          {
+            "node": "ClickHouse - Pipeline Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ClickHouse - Pipeline Status": {
+      "main": [
+        [
+          {
+            "node": "Parse & Combine",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse & Combine": {
+      "main": [
+        [
+          {
+            "node": "IF Anomaly Detected",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "IF Pipeline Stale",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Anomaly Detected": {
+      "main": [
+        [
+          {
+            "node": "Slack - Anomaly Alert",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Gmail - Anomaly Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Pipeline Stale": {
+      "main": [
+        [
+          {
+            "node": "Slack - Pipeline Stale",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Gmail - Pipeline Stale",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "staticData": {
+    "node:Every 1 Minute": {
+      "recurrenceRules": []
+    }
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "nodeGroups": [],
+  "pinData": {},
+  "versionId": "224228d2-8f00-4e2d-b95f-c0af874f4280",
+  "activeVersionId": "224228d2-8f00-4e2d-b95f-c0af874f4280",
+  "versionCounter": 5800,
+  "triggerCount": 1,
+  "sourceWorkflowId": null,
+  "tags": [],
+  "shared": [
+    {
+      "updatedAt": "2026-02-23T05:24:29.009Z",
+      "createdAt": "2026-02-23T05:24:29.009Z",
+      "role": "workflow:owner",
+      "workflowId": "wSAmy0kCFOuxFCz2",
+      "projectId": "0DlWzROCMlJ3ucmM",
+      "project": {
+        "updatedAt": "2026-02-02T12:16:06.626Z",
+        "createdAt": "2026-02-02T12:09:14.598Z",
+        "id": "0DlWzROCMlJ3ucmM",
+        "name": "JUNSEO LEE <aguantar7093@gmail.com>",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "customTelemetryTags": [],
+        "creatorId": "9a11d357-1d5c-4acb-8d0b-bdf8d967d173"
+      }
+    }
+  ],
+  "versionMetadata": {
+    "name": "final01",
+    "description": ""
+  }
+}
