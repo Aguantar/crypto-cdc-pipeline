@@ -1,0 +1,183 @@
+version: 2
+
+# 중간 층은 마트·신호·품질이 공통으로 쓰는 계산을 한 번만 하는 자리다.
+# 하루 경계가 모델마다 다르다(OHLCV=KST, 대조·급등=UTC) - 이름으로 구분한다(docs/34 #3).
+
+models:
+  - name: int_ohlcv_1h
+    description: >
+      **한 행 = (마켓, KST 1시간) 하나.** 체결 시각 기준 시간봉.
+      Flink 의 5분 처리 시간 집계는 2026-09-19 폐기했다(docs/29 §7) - 스트리밍은 실시간 판정, dbt 는 원본 틱 기반의 정확한 배치 집계로 역할을 나눴다.
+    columns:
+      - name: market
+        description: "업비트 마켓 코드."
+        tests: [not_null]
+      - name: hour_kst
+        description: "**체결 기준 KST 시간 버킷.** 적재 시각이 아니다."
+        tests: [not_null]
+      - name: open
+        description: "그 시간 첫 체결가."
+      - name: high
+        description: "그 시간 최고 체결가."
+      - name: low
+        description: "그 시간 최저 체결가."
+      - name: close
+        description: "그 시간 마지막 체결가(이벤트 순서 기준)."
+      - name: volume
+        description: "그 시간 체결 수량 합."
+      - name: amount
+        description: "그 시간 체결 금액 합(KRW)."
+      - name: trade_count
+        description: "그 시간 체결 건수."
+      - name: bid_count
+        description: "테이커 매수 체결 건수."
+      - name: ask_count
+        description: "테이커 매도 체결 건수."
+      - name: vwap
+        description: "거래량 가중 평균가 = 금액 합 ÷ 수량 합."
+
+  - name: int_ohlcv_daily
+    description: >
+      **한 행 = (마켓, KST 하루) 하나.** 일봉 + 일중 변동폭. `mart_daily_summary` 의 직접 원천이다.
+    columns:
+      - name: market
+        description: "업비트 마켓 코드."
+        tests: [not_null]
+      - name: day_kst
+        description: "**체결 기준 KST 하루.**"
+        tests: [not_null]
+      - name: open
+        description: "시가."
+      - name: high
+        description: "고가."
+      - name: low
+        description: "저가."
+      - name: close
+        description: "종가."
+      - name: volume
+        description: "체결 수량 합."
+      - name: amount
+        description: "체결 금액 합(KRW)."
+      - name: trade_count
+        description: "체결 건수."
+      - name: bid_count
+        description: "테이커 매수 건수."
+      - name: ask_count
+        description: "테이커 매도 건수."
+      - name: vwap
+        description: "거래량 가중 평균가."
+      - name: daily_range_pct
+        description: "일중 변동폭 % = (고가 − 저가) ÷ 저가 × 100."
+
+  - name: int_reconcile_hourly
+    description: >
+      **한 행 = (마켓, UTC 1시간) 하나.** 우리 체결 수량과 거래소 1시간 캔들 수량을 나란히 둔 표.
+      **유실 판정의 원본**이며 `dq_reconcile_daily` 가 이것을 하루로 접는다.
+      범위는 참조 캔들이 있는 구간(최근 90일)이고, 매일 전체 재계산한다 - 수십만 행이라 증분보다 단순함이 이득이다.
+    columns:
+      - name: market
+        description: "업비트 마켓 코드."
+        tests: [not_null]
+      - name: hour_utc
+        description: "**UTC 시간 버킷.** 거래소 캔들과 같은 기준이어야 비교가 성립한다."
+        tests: [not_null]
+      - name: ch_vol
+        description: "우리 ClickHouse 의 그 시간 체결 수량 합."
+      - name: ch_n
+        description: "우리 체결 건수. 0 이면 그 셀은 '우리에게 없음'."
+      - name: candle_vol
+        description: "거래소 캔들의 체결 수량. **비교의 분모.** 0 인 셀은 대조에서 제외한다."
+      - name: candle_amt
+        description: "거래소 캔들의 체결 금액."
+      - name: ratio_pct
+        description: "일치율 % = ch_vol ÷ candle_vol × 100."
+      - name: reconciled_at
+        description: "대조 시각."
+
+  - name: int_alert_transitions_recomputed
+    description: >
+      **한 행 = 재계산된 등급 전이 하나.** 같은 정의를 SQL 로 다시 계산해 Flink 출력과 맞춰 보기 위한 표(docs/22 §4).
+      **임계가 맞는지가 아니라 구현이 정의를 따르는지**를 보는 것이 목적이므로, 늦은 이벤트 가드(지연 60초 초과 제외)까지 Flink 와 똑같이 재현한다.
+    columns:
+      - name: market
+        description: "업비트 마켓 코드."
+        tests: [not_null]
+      - name: upbit_timestamp
+        description: "판정의 근거가 된 체결 시각(Unix ms)."
+      - name: event_time
+        description: "전이 시각 = **분 끝**. 분 종가 판정이므로 체결 하나에 대응하지 않는다."
+      - name: prev
+        description: "직전 등급(0~3)."
+      - name: lvl
+        description: "전이 후 등급(0 해제 / 1 주의 / 2 경고 / 3 위험)."
+      - name: window_from
+        description: "재계산 창 시작. 비교 범위를 명시해 둔다."
+      - name: computed_at
+        description: "재계산 시각."
+
+  - name: int_volume_surge_daily
+    description: >
+      **한 행 = (마켓, 하루) 하나.** 거래대금 급등 규칙(VOLUME_24H): 7일 평균의 4배 이상 **AND** 10억 원 이상.
+      두 조건을 함께 거는 이유는 금액이 작은 마켓이 배수만으로 쉽게 튀기 때문이다(docs/16 §4-2, 정밀도 0.79 / 재현율 0.80).
+      **알려진 한계(2026-09-20 발견)**: 하루를 `source_ts`(binlog 시각)로 자른다. 급등 규칙은 체결 시각 기준이어야 맞다 -
+      평소 지연이 초 단위라 차이가 거의 없지만, 적재 지연 사고(docs/08) 때는 거래가 엉뚱한 날에 잡힌다. 별도 항목으로 고칠 예정.
+    columns:
+      - name: market
+        description: "업비트 마켓 코드."
+        tests: [not_null]
+      - name: day_utc
+        description: "**적재(binlog) 기준 UTC 하루** - 위 한계 참고."
+        tests: [not_null]
+      - name: amount
+        description: "그 날 거래대금(KRW)."
+      - name: avg7
+        description: "직전 7일 평균 거래대금. 창이 안 찼으면 NaN 이 나올 수 있다(`days_in_window` 로 판단)."
+      - name: ratio
+        description: "배수 = amount ÷ avg7."
+      - name: days_in_window
+        description: "평균 계산에 실제로 쓰인 일수. 7 미만이면 배수를 신뢰하지 않는다."
+      - name: flagged
+        description: "지정 여부(1/0). 두 임계를 모두 넘겨야 1."
+        tests: [not_null]
+      - name: threshold_ratio
+        description: "적용된 배수 임계(4). 값을 표에 남겨 나중에 재현 가능하게 한다."
+      - name: threshold_amount
+        description: "적용된 금액 임계(10억)."
+
+  - name: int_fx_usdt_krw_hourly
+    description: >
+      **한 행 = UTC 1시간 하나.** USDT/KRW 환율. **외부 환율 API 가 아니라 우리가 수집한 업비트 KRW-USDT 마켓**에서 만든다(docs/34 #4).
+      그래야 김치 프리미엄이 '우리 데이터 안에서' 닫힌다.
+    columns:
+      - name: hour_utc
+        description: "UTC 시간 버킷."
+        tests: [not_null, unique]
+      - name: usdt_krw_close
+        description: "그 시간 마지막 체결가 = 환율 종가. **김프 계산이 쓰는 값.**"
+        tests: [not_null]
+      - name: usdt_krw_vwap
+        description: "그 시간 거래량 가중 평균 환율. 종가가 튀는지 비교용."
+      - name: trades
+        description: "그 시간 KRW-USDT 체결 건수. 적으면 환율을 신뢰하지 않는다."
+
+  - name: int_venue_hourly_close
+    description: >
+      **한 행 = (코인, 거래소, UTC 1시간) 하나.** 거래소별 시간 종가를 같은 축에 놓는다.
+      코인 연결은 `dim_coins.coin_id` 로 한다(티커 문자열 치환 아님).
+    columns:
+      - name: coin_id
+        description: "`dim_coins` 의 코인 식별자."
+        tests: [not_null]
+      - name: venue
+        description: "거래소. `upbit` 또는 `binance`."
+        tests:
+          - accepted_values:
+              values: ['upbit', 'binance']
+      - name: hour_utc
+        description: "UTC 시간 버킷. 두 거래소가 같은 버킷이어야 비교가 성립한다."
+      - name: close
+        description: "그 시간 마지막 체결가. Upbit 은 KRW, Binance 는 USDT - **단위가 다르므로 그대로 빼면 안 된다.**"
+      - name: trades
+        description: "그 시간 체결 건수. 신뢰도 판단용."
+      - name: amount_quote
+        description: "그 시간 체결 금액(각 거래소의 견적 통화 기준)."
