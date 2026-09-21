@@ -1,0 +1,266 @@
+version: 2
+
+# 품질 층(dq_*)은 DE 가 소유하는 경계 계약의 결과다. 하류가 "이 데이터를 믿어도 되나"를 물을 때 보는 표들이며,
+# 하루 경계는 전부 UTC(`day_utc`) 다 - 거래소 정답과 같은 기준이어야 대조가 성립하기 때문(docs/34 #3).
+
+models:
+  - name: dq_reconcile_daily
+    description: >
+      **한 행 = UTC 하루 하나.** Upbit 체결을 거래소 1시간 캔들과 대조한 결과 요약. **유실 판정의 단일 근거.**
+      가중 비율만 보면 안 된다 - 99.3% 인데 한 마켓·한 시간이 50% 인 경우(09-15 TIA)를 가중치가 가리기 때문에 셀 최소값을 같이 둔다.
+    columns:
+      - name: day_utc
+        description: "UTC 기준 하루."
+        tests: [not_null, unique]
+      - name: weighted_pct
+        description: "가중 일치율 % = 우리 수량 합 ÷ 거래소 캔들 수량 합 × 100. **목표 ≥ 99.9**."
+      - name: cells
+        description: "대조한 (마켓, 시간) 셀 수."
+      - name: cells_below_99
+        description: "일치율 99% 미만인 셀 수. 0 이어야 한다."
+      - name: cells_no_rows
+        description: "거래소엔 체결이 있는데 우리에겐 한 건도 없는 셀 수. **유실의 직접 신호.**"
+      - name: markets_no_rows
+        description: "그런 셀이 발생한 마켓 수."
+      - name: min_cell_pct
+        description: "가장 나쁜 셀의 일치율 %. **가중 비율이 가리는 국소 유실을 여기서 본다.**"
+      - name: worst_cell
+        description: "가장 나쁜 셀의 (마켓, 시간). 조사 시작점."
+      - name: reconciled_at
+        description: "대조를 수행한 시각."
+
+  - name: dq_binance_reconcile_daily
+    description: >
+      **한 행 = UTC 하루 하나.** Binance 체결을 거래소 1시간 캔들의 **체결 수(n)** 와 대조한다.
+      Upbit 대조가 '수량'을 비교하는 것과 달리 여기는 '건수'다 - 분모가 다르므로 두 지표를 같은 축에 놓지 않는다.
+      우리 > 거래소(101% 초과)는 중복(RMT 미머지)이나 시각 경계 문제, 우리 < 거래소는 유실이다.
+    columns:
+      - name: day_utc
+        description: "UTC 기준 하루."
+        tests: [not_null, unique]
+      - name: weighted_pct
+        description: "가중 일치율 % (체결 건수 기준). 목표 ≥ 99.9."
+      - name: cells
+        description: "대조한 (심볼, 시간) 셀 수. 493 심볼 기준."
+      - name: cells_below_99
+        description: "99% 미만 셀 수(유실 방향)."
+      - name: cells_above_101
+        description: "101% 초과 셀 수(**중복 방향**). Upbit 대조에는 없는 열이다."
+      - name: cells_no_rows
+        description: "거래소엔 있고 우리에겐 없는 셀 수."
+      - name: symbols_no_rows
+        description: "그런 셀이 난 심볼 수."
+      - name: min_cell_pct
+        description: "가장 나쁜 셀의 일치율 %."
+      - name: worst_cell
+        description: "가장 나쁜 셀의 (심볼, 시간)."
+      - name: computed_at
+        description: "계산 시각."
+
+  - name: dq_ingest_daily
+    description: >
+      **한 행 = UTC 하루 하나.** 적재 지연 분위수와 늦은 행 수.
+      **주의: 여기서 하루는 `source_ts`(binlog 시각) 기준이다** - '언제 들어왔나'를 재는 지표이므로 적재 기준이 맞다.
+      체결 시각 기준 하루가 필요하면 마트(`day_kst`)나 `stg_trades.trade_day_utc` 를 봐야 한다.
+    columns:
+      - name: day_utc
+        description: "**적재(binlog) 기준 UTC 하루.** 체결 시각 기준이 아니다."
+        tests: [not_null, unique]
+      - name: rows
+        description: "그 날 적재된 체결 행 수."
+      - name: markets
+        description: "적재가 있었던 마켓 수."
+      - name: lag_p50_s
+        description: "적재 지연 중앙값(초) = binlog 시각 − 거래소 체결 시각. 60초 넘는 행은 분위수에서 제외한다(백필 섞임 방지)."
+      - name: lag_p95_s
+        description: "적재 지연 p95(초). 관찰 주간 기준선은 7.75초(docs/14)."
+      - name: lag_max_live_s
+        description: "60초 이내 행 중 최대 지연(초)."
+      - name: late_rows_gt_60s
+        description: "지연 60초 초과 행 수. **늦은 이벤트 가드의 대상**이며 이상탐지 상태를 건드리지 않는다(docs/20)."
+      - name: rows_without_bbo
+        description: "체결 순간의 최우선 호가가 비어 있던 행 수. 호가 결합 마트의 커버리지 지표."
+
+  - name: dq_orderbook_gaps_daily
+    description: >
+      **한 행 = UTC 하루 하나.** 호가 스냅샷의 공백을 초 단위로 센다.
+      정상은 마켓당 초당 1건 안팎이므로, 특정 초에 0건이거나 현저히 적으면 수집이 끊긴 것이다.
+    columns:
+      - name: day_utc
+        description: "UTC 기준 하루."
+        tests: [not_null, unique]
+      - name: snapshots
+        description: "그 날 호가 스냅샷 수."
+      - name: median_per_sec
+        description: "초당 스냅샷 수의 중앙값. 기준선 판단에 쓴다."
+      - name: zero_seconds
+        description: "스냅샷이 한 건도 없던 초의 수."
+      - name: low_seconds
+        description: "중앙값보다 현저히 적었던 초의 수."
+      - name: gap_windows
+        description: "연속된 공백을 창으로 묶은 개수. **알럿 임계는 이 값 > 0**."
+      - name: gap_seconds_total
+        description: "공백 초의 합."
+      - name: gap_longest_s
+        description: "가장 긴 공백(초)."
+      - name: est_lost_snapshots
+        description: "공백 동안 받았어야 할 스냅샷 추정치 = 공백 초 × 중앙값. **추정이지 실측이 아니다.**"
+      - name: gap_sample
+        description: "공백 구간 표본(조사 시작점)."
+
+  - name: dq_rule_eval_daily
+    description: >
+      **한 행 = (UTC 하루, 규칙) 하나.** 우리 이상탐지 출력을 **거래소 지정 이력과 대조**한 성적표.
+      신규 상장 96시간은 거래소가 지정하지 않으므로 평가에서 뺀다(거래소 공식 기준, docs/16).
+    columns:
+      - name: day_utc
+        description: "UTC 기준 하루."
+        tests: [not_null]
+      - name: rule
+        description: "평가 대상 규칙. `PRICE_24H` 또는 `VOLUME_24H`."
+      - name: ours
+        description: "그 날 우리가 낸 지정(승급) 수."
+      - name: matched
+        description: "거래소 지정과 맞물린 수."
+      - name: exchange
+        description: "거래소가 실제로 지정한 수."
+      - name: precision
+        description: "정밀도 = matched ÷ ours. **우리가 지정한 것 중 맞은 비율**(거짓 경보의 반대)."
+      - name: recall
+        description: "재현율(전이 기준) = matched ÷ exchange. 거래소의 '재지정' 습관까지 우리에게 요구하므로 참고용이다."
+      - name: state_recall
+        description: >
+          재현율(상태 기준). 거래소 지정 시점 ±10분에 우리 등급이 ≥1 이었나로 센다.
+          **승격 판단은 동등성으로 하고 이 값은 참고**다(docs/22 §4-4) - 분 단위 플래핑과 수 분짜리 지정이 어긋나기 때문.
+      - name: lead_median_s
+        description: "선행 시간 중앙값(초). 양수면 우리가 거래소보다 먼저 지정했다는 뜻."
+
+  - name: dq_alert_parity_daily
+    description: >
+      **한 행 = UTC 하루 하나.** 같은 정의를 SQL 로 다시 계산한 결과와 Flink 가 실시간으로 낸 결과가 같은지 본다.
+      **승격 기준이 이 표다** - 임계가 맞는지가 아니라 **구현이 정의를 따르는지**를 확인하는 것이 섀도의 목적이기 때문(docs/22 §4).
+    columns:
+      - name: day_utc
+        description: "UTC 기준 하루."
+        tests: [not_null, unique]
+      - name: sql_transitions
+        description: "SQL 재계산이 만든 전이 수."
+      - name: flink_transitions
+        description: "Flink 가 실시간으로 만든 전이 수."
+      - name: matched
+        description: "양쪽이 일치한 전이 수."
+      - name: parity_ok
+        description: "미매칭 0 이고 표본이 충분한가(1/0). **승격 조건은 전이 10건 이상에서 이 값이 1.**"
+      - name: unmatched_flink_sample
+        description: "Flink 에만 있는 전이 표본(조사용)."
+      - name: unmatched_sql_sample
+        description: "SQL 에만 있는 전이 표본."
+      - name: window_from
+        description: "비교 창 시작."
+      - name: computed_at
+        description: "계산 시각."
+
+  - name: dq_repairs_daily
+    description: >
+      **한 행 = (UTC 하루, 수리 이유) 하나.** 유입 공백을 얼마나 자주·얼마나 메웠나.
+      `day_utc` 단독으로 유일하지 않다(하루에 이유가 여럿) - 복합키 입도를 단일 테스트로 강제한다.
+    columns:
+      - name: day_utc
+        description: "UTC 기준 하루."
+        tests: [not_null]
+      - name: reason
+        description: "수리를 유발한 사건. `reconnect`(재연결) / `startup`(재기동) / `manual`(사람이 실행)."
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['reconnect', 'startup', 'manual']
+      - name: repairs
+        description: "수리 창 수."
+      - name: exchange_rows_in_windows
+        description: "그 창에서 거래소가 갖고 있던 행 수(REST 로 확인한 값)."
+      - name: rows_recovered
+        description: "실제로 메워 넣은 행 수. `exchange_rows_in_windows` 보다 작으면 아직 못 메운 것이 있다는 뜻."
+      - name: gap_seconds
+        description: "공백 초의 합."
+      - name: avg_elapsed_s
+        description: "수리 한 번에 걸린 평균 시간(초)."
+
+  - name: dq_ingest_gaps_labeled
+    description: >
+      **한 행 = 수리 창 하나.** 공백에 거래소 공지로 설명을 붙인다(docs/37).
+      공백을 세는 것만으로는 사고인지 점검인지 모른다 - 업비트 서버 점검 중에는 전 마켓 거래가 멈추므로 **체결이 없는 것이 정상**이다.
+    columns:
+      - name: window_start
+        description: "공백 시작(UTC)."
+        tests: [not_null]
+      - name: window_end
+        description: "공백 끝(UTC)."
+      - name: reason
+        description: "수리 이유(reconnect/startup/manual)."
+      - name: gap_seconds
+        description: "공백 길이(초). **주간 다이제스트는 60초 이상만 '고칠 것'에 올린다** - 재기동이 만든 수 초짜리까지 올리면 아무도 안 본다."
+      - name: markets
+        description: "그 창에 영향받은 마켓 수."
+      - name: inserted_rows
+        description: "그 창에서 복구한 행 수."
+      - name: maintenance_notices
+        description: "구간이 겹치는 **전체 점검** 공지 제목 배열. 비어 있지 않으면 이 공백은 유실이 아니다."
+      - name: maintenance_urls
+        description: "그 공지들의 링크."
+      - name: market_notice_candidates
+        description: >
+          ±24시간 안의 **코인별 거래지원 중단 공지 후보**. 본문에 재개 시각만 있는 경우가 있어
+          창을 지어내지 않고 후보로만 둔다 - 지어낸 창으로 '설명됨' 도장을 찍는 것보다 사람이 닫는 편이 낫다.
+      - name: explained_by_maintenance
+        description: "전체 점검으로 설명되나(1/0)."
+        tests: [not_null]
+
+  - name: dq_ledger_daily
+    description: >
+      **한 행 = (UTC 하루, 심볼) 하나.** 2층 가상 원장의 **3자 대조**: 거래소(ex_) = MySQL(my_) = ClickHouse(ch_).
+      `ex_my` 는 '우리 원장이 거래소와 같은가', `my_ch` 는 'CDC 가 그것을 온전히 옮겼는가' - **고칠 곳이 다르므로 나눠 둔다.**
+      세 값은 모두 **그 날의 마지막 대조 시각까지**로 잘라 비교한다. 자르는 기준이 열마다 다르다
+      (주문 수 = 생성 시각, 상태 집계 = 갱신 시각, 체결 = 체결 시각) - 그러지 않으면 열린 날은 항상 불일치로 나온다(docs/38 §3).
+    columns:
+      - name: day_utc
+        description: "UTC 기준 하루."
+        tests: [not_null]
+      - name: symbol
+        description: "바이낸스 심볼."
+        tests: [not_null]
+      - name: ex_orders
+        description: "거래소가 말하는 주문 수."
+      - name: my_orders
+        description: "우리 MySQL 원장의 주문 수."
+      - name: ch_orders
+        description: "ClickHouse 의 주문 수(FINAL)."
+      - name: ex_filled
+        description: "거래소 기준 체결 완료 주문 수."
+      - name: my_filled
+        description: "MySQL 기준."
+      - name: ch_filled
+        description: "ClickHouse 기준."
+      - name: ex_exec_qty
+        description: "거래소 기준 체결 수량 합."
+      - name: my_exec_qty
+        description: "MySQL 기준."
+      - name: ch_exec_qty
+        description: "ClickHouse 기준."
+      - name: ex_trades
+        description: "거래소 기준 체결(트레이드) 건수."
+      - name: my_trades
+        description: "MySQL 기준."
+      - name: ch_trades
+        description: "ClickHouse 기준."
+      - name: ex_trade_qty
+        description: "거래소 기준 체결 수량."
+      - name: my_trade_qty
+        description: "MySQL 기준."
+      - name: ch_trade_qty
+        description: "ClickHouse 기준."
+      - name: ex_my_mismatch
+        description: "거래소 ≠ MySQL 인가(1/0). **원장 생성기 쪽 문제.**"
+      - name: my_ch_mismatch
+        description: "MySQL ≠ ClickHouse 인가(1/0). **CDC 파이프라인 쪽 문제.**"
+      - name: reconciled_at
+        description: "그 날 마지막 대조 시각. 위의 '자르는 기준'이 되는 값."
