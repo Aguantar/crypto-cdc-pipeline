@@ -1,6 +1,6 @@
-# cdc-realtime-pipeline
+# crypto-cdc-pipeline
 
-[![CI](https://github.com/Aguantar/cdc-realtime-pipeline/actions/workflows/ci.yml/badge.svg)](https://github.com/Aguantar/cdc-realtime-pipeline/actions/workflows/ci.yml)
+[![CI](https://github.com/Aguantar/crypto-cdc-pipeline/actions/workflows/ci.yml/badge.svg)](https://github.com/Aguantar/crypto-cdc-pipeline/actions/workflows/ci.yml)
 
 미니 PC 한 대에서 암호화폐 거래소의 실데이터를 상시 수집하고, 그 값이 맞는지를 거래소가 공개한
 정답과 대조해 증명하는 파이프라인입니다. 2026년 2월 13일에 첫 데이터가 들어왔고 오늘로 221일째
