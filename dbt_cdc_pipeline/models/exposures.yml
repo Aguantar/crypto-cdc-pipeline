@@ -1,0 +1,106 @@
+version: 2
+
+# 주의: exposure 의 `url` 에 적힌 `<내-도메인>` 은 일부러 가린 것이다(2026-09-21).
+# 공개 저장소에 실제 도메인을 적으면 공격자에게 표적을 알려 주는 셈이고, 도메인은 문서의 뜻과 무관하다.
+# 실제 주소는 로컬 `.env`·Caddyfile 에만 있다. 도메인은 공개 저장소에서 가린다.
+
+exposures:
+  - name: crypto_market_dashboard
+    type: dashboard
+    maturity: medium
+    url: https://grafana.<내-도메인>
+    description: "코인 시세 실시간 대시보드 - 일별 시세, 시간봉 캔들"
+    depends_on:
+      - ref('mart_daily_summary')
+      - ref('int_ohlcv_1h')
+    owner:
+      name: 이준서
+
+  - name: pipeline_quality_dashboard
+    type: dashboard
+    maturity: low
+    url: https://grafana.<내-도메인>
+    description: "파이프라인 품질 - 일별 원장 대조, 수리 계보, 적재 지연, 규칙 평가(정밀도·재현율)"
+    depends_on:
+      - ref('dq_reconcile_daily')
+      - ref('dq_repairs_daily')
+      - ref('dq_ingest_daily')
+      - ref('dq_rule_eval_daily')
+    owner:
+      name: 이준서
+
+  - name: daily_report_slack
+    type: application
+    maturity: high
+    description: "Airflow daily_pipeline 이 매일 16:00 UTC(01:00 KST) Slack 으로 보내는 일일 리포트 - 코인별 요약·품질 게이트·중복 감시"
+    depends_on: [ref('int_ohlcv_daily'), ref('dq_reconcile_daily'), ref('dq_repairs_daily'), ref('dq_ingest_daily')]
+    owner: {name: 이준서}
+
+  - name: quality_slo_alerts
+    type: application
+    maturity: high
+    description: "Airflow quality_alerts 가 매시 :50 에 dq 표를 SLO 와 비교해 위반이면 Slack(하루 1회 dedup). docs/32 §1 표가 임계의 근거"
+    depends_on: [ref('dq_reconcile_daily'), ref('dq_binance_reconcile_daily'), ref('dq_orderbook_gaps_daily'), ref('dq_alert_parity_daily'), ref('dq_ledger_daily')]
+    owner: {name: 이준서}
+
+  - name: weekly_ops_digest
+    type: application
+    maturity: medium
+    description: "월요일 09:00 KST 주간 다이제스트 - 트래픽 피크·지연 추세·울린 알럿·품질 추세·자원·고칠 것(docs/32 §2 ③)"
+    depends_on: [ref('dq_reconcile_daily'), ref('dq_binance_reconcile_daily'), ref('dq_alert_parity_daily')]
+    owner: {name: 이준서}
+
+  - name: cross_venue_analysis
+    type: analysis
+    maturity: low
+    description: "교차 거래소 분석 - 김치 프리미엄(시간), 경보 구간과 우리 주문의 겹침. 코인 매핑은 dim_coins(docs/34 #4)"
+    depends_on: [ref('sig_kimchi_premium_hourly'), ref('sig_cross_venue_flag_overlap'), ref('dim_coins'), ref('dim_market_flag_scd')]
+    owner: {name: 이준서}
+
+  - name: trade_orderbook_mart_analysis
+    type: analysis
+    maturity: medium
+    description: "체결×호가 분 결합 마트 - 되튐·체결 품질 분석의 입구(docs/27). 지표 정의는 docs/36"
+    depends_on: [ref('mart_trade_orderbook_1m')]
+    owner: {name: 이준서}
+
+  # ── 2026-09-20 (docs/40 ⑦): 대시보드 2개가 실제로 조회하는 모델을 등록한다.
+  # 등록 전에는 int_ohlcv_1h·int_volume_surge_daily 가 "하류 없음"으로 보여 죽은 모델로 오해할 수 있었다.
+  # exposure 는 문서가 아니라 삭제 방지 장치다 - 지우기 전에 누가 아픈지 dbt 가 말해 준다.
+  - name: grafana_pipeline_observability
+    label: "Grafana · 파이프라인 관측 · 오류 탐지"
+    type: dashboard
+    maturity: high
+    url: https://grafana.<내-도메인>/d/cdc-pipeline-main
+    description: >
+      "지금 파이프라인이 제대로 도는가"에 답하는 대시보드(23패널, 6섹션: 지금 상태 · 유입 · 지연 · 정확성 · 오류/공백 · 자원/알럿).
+      새로고침 10초. Caddy basic_auth 뒤에서 데모 자격증명으로 공개한다.
+    owner:
+      name: 이준서
+      email: aguantar7093@gmail.com
+    depends_on:
+      - ref('dq_reconcile_daily')
+      - ref('dq_binance_reconcile_daily')
+      - ref('dq_ledger_daily')
+      - ref('dq_ingest_daily')
+      - ref('dq_repairs_daily')
+      - ref('dq_ingest_gaps_labeled')
+
+  - name: grafana_anomaly
+    label: "Grafana · 이상탐지 (시장 경보)"
+    type: dashboard
+    maturity: high
+    url: https://grafana.<내-도메인>/d/cdc-anomaly
+    description: >
+      "무엇이 언제 지정됐고 그 판정이 맞나"에 답하는 대시보드(18패널, 5섹션: 지정 상태 · 전이 · 규칙 평가 · 거래대금 급등 · 마켓 상태와 시장 맥락).
+      PRICE_24H 는 2026-09-20 정식 승격(v2.1.1), VOLUME_24H 는 섀도.
+    owner:
+      name: 이준서
+      email: aguantar7093@gmail.com
+    depends_on:
+      - ref('dq_rule_eval_daily')
+      - ref('int_ohlcv_1h')
+      - ref('int_ohlcv_daily')
+      - ref('int_volume_surge_daily')
+      - ref('mart_daily_summary')
+      - ref('dim_market_state_scd')
