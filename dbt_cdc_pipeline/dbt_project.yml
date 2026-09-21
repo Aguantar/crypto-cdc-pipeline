@@ -1,0 +1,39 @@
+name: 'cdc_pipeline_analytics'
+version: '1.0.0'
+config-version: 2
+
+profile: 'cdc_pipeline'
+
+model-paths: ["models"]
+analysis-paths: ["analyses"]
+test-paths: ["tests"]
+seed-paths: ["seeds"]
+macro-paths: ["macros"]
+snapshot-paths: ["snapshots"]
+
+clean-targets:
+  - "target"
+  - "dbt_packages"
+
+models:
+  cdc_pipeline_analytics:
+    # 2026-09-20 (docs/40 ⑤): 설명을 ClickHouse 주석으로 내려보낸다.
+    # 이유: 넘겨받는 쪽은 dbt docs 가 아니라 BI 도구나 SQL 클라이언트에서 컬럼을 본다.
+    # 거기에 설명이 없으면 문서를 아무리 써도 쓰는 자리에서는 안 보인다.
+    +persist_docs:
+      relation: true
+      columns: true
+    staging:
+      +materialized: view
+    intermediate:
+      +materialized: table
+    marts:
+      +materialized: table
+    quality:
+      +materialized: table   # 파이프라인 품질 층 (docs/22): 대조·수리·지연·규칙 평가. DE 가 소유하는 경계 계약의 결과 테이블
+    # 2026-09-20 (docs/40 ⑧): 이 둘이 선언돼 있지 않아 모델마다 config 로 버티고 있었다.
+    # config 를 빠뜨린 모델을 하나 추가하면 조용히 view 가 된다 - 기본값을 레이어에 못 박는다.
+    dimensions:
+      +materialized: table   # 차원·SCD: 조인 대상이라 뷰로 두면 매 조회마다 재계산된다
+    signals:
+      +materialized: table   # 신호: 계산이 무겁고 조회가 잦다
