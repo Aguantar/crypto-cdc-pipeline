@@ -55,7 +55,7 @@ RULES = [
     ("Cron Freshness", """SELECT toString(today()) AS day_s,
                                  arrayStringConcat(arrayFilter(x -> x != '', [
                                    if(ops_min    > 30,  concat('ops_metrics_5m ',   toString(ops_min),   '분'), ''),
-                                   if(state_min  > 1500, concat('market_state ',     toString(state_min), '분'), ''),
+                                   if(state_min  > 30,   concat('market_state ',     toString(state_min), '분'), ''),
                                    if(notice_min > 180, concat('exchange_notices ', toString(notice_min),'분'), ''),
                                    if(flag_min   > 30,  concat('market_events ',    toString(flag_min),  '분'), '')
                                  ]), ', ') AS stale_list,
@@ -63,7 +63,7 @@ RULES = [
                           FROM (
                             SELECT
                               (SELECT dateDiff('minute', max(ts), now())         FROM cdc_pipeline.ops_metrics_5m)            AS ops_min,
-                              (SELECT dateDiff('minute', max(observed_at), now()) FROM cdc_pipeline.upbit_market_state_events) AS state_min,
+                              (SELECT dateDiff('minute', max(ts), now()) FROM cdc_pipeline.cron_heartbeats WHERE job = 'market_state') AS state_min,  -- 2026-09-24 (docs/46): 전이 표가 아니라 생존 신호로
                               (SELECT dateDiff('minute', max(updated_at), now())  FROM cdc_pipeline.exchange_notices)          AS notice_min,
                               (SELECT dateDiff('minute', max(observed_at), now()) FROM cdc_pipeline.upbit_market_events)       AS flag_min
                           )""",

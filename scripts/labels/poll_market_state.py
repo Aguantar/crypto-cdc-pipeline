@@ -60,16 +60,22 @@ def to_row(m):
     }
 
 
-def insert(rows):
+def insert(rows, table='cdc_pipeline.upbit_market_state_events'):
     if not rows:
         return
     payload = '\n'.join(json.dumps(r, ensure_ascii=False) for r in rows)
     p = subprocess.run(
         ['docker', 'exec', '-i', 'cdc-clickhouse', 'clickhouse-client', '-q',
-         'INSERT INTO cdc_pipeline.upbit_market_state_events FORMAT JSONEachRow'],
+         f'INSERT INTO {table} FORMAT JSONEachRow'],
         input=payload, text=True, capture_output=True)
     if p.returncode != 0:
         raise RuntimeError(p.stderr.strip()[:300])
+
+
+def heartbeat(now, detail):
+    # 2026-09-24 (docs/46): 이 표는 전이만 적재하므로 "변화 없음" 과 "cron 죽음" 이 같은 모양이다. 폴링이 성공할 때마다
+    # 생존 신호를 따로 남긴다. quality_alerts 의 Cron Freshness 가 이 표의 max(ts) 를 본다.
+    insert([{'job': 'market_state', 'ts': now, 'detail': detail}], table='cdc_pipeline.cron_heartbeats')
 
 
 def main():
@@ -110,6 +116,7 @@ def main():
         return 0
     insert(rows)
     json.dump(cur, open(state_path, 'w'))   # 적재 성공 뒤에만 갱신
+    heartbeat(now, f'markets={len(cur)} rows={len(rows)} kind={kind}')
     changed = ', '.join(f"{r['market']}={r['market_state']}" for r in rows[:5])
     print(f'{now} 마켓 {len(cur)} / 적재 {len(rows)} ({kind}) {changed}{" ..." if len(rows) > 5 else ""}')
     return 0

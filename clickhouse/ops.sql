@@ -20,3 +20,14 @@ CREATE TABLE IF NOT EXISTS cdc_pipeline.ops_digest
     week_start Date, generated_at DateTime, body String
 )
 ENGINE = ReplacingMergeTree(generated_at) ORDER BY week_start;
+
+-- 2026-09-24 (docs/46): 호스트 cron 의 생존 신호. 전이만 적재하는 표(upbit_market_state_events)는 "조용한 것" 과
+-- "죽은 것" 을 구분 못 해 Cron Freshness 가 매일 오경보를 냈다(09-20 06:09 이후 상태 변화 0 = 5,441분 정지로 판정).
+-- 폴링이 성공할 때마다 한 행. 판정은 이 표의 max(ts) 로 한다.
+CREATE TABLE IF NOT EXISTS cdc_pipeline.cron_heartbeats
+(
+    job    LowCardinality(String),   -- market_state 등 cron 이름
+    ts     DateTime,                 -- 폴링 성공 시각(UTC)
+    detail String                    -- 그 폴링의 요약 (마켓 수 등)
+)
+ENGINE = MergeTree ORDER BY (job, ts) TTL ts + INTERVAL 30 DAY;
