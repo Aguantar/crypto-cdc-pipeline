@@ -52,7 +52,10 @@ models:
     data_type: UInt8
   config:
     contract:
-      enforced: true
+      # 2026-09-24 (docs/44 §6): 강제를 끈다. dbt-clickhouse 1.7.2 는 계약 타입을 그대로 DDL 로 쓰면서 비교 전에는
+      #   Nullable/LowCardinality 를 벗겨 비교한다. 수식자를 적으면 매 실행이 실패하고, 벗기면 물리 타입이 바뀌어
+      #   NULL 이 기본값(1970-01-01, 0)이 된다(09-24 01:27 실측: delisting_date 287/289). 아래 data_type 은 문서다.
+      enforced: false
 - name: dim_markets
   description: '**한 행 = 업비트 원화 마켓 하나(현재 목록 기준).** 마켓 마스터 + 우리가 처음/마지막 본 체결 시각 + 현재 상태. **주의: 폐지된 마켓은 여기서 사라진다** - 거래소 목록(`upbit_market_master`)이 현재 목록만 담기 때문이다. 과거 마켓을 보려면 `dim_market_state_scd` 를 봐야 한다(docs/34
     #9).
@@ -117,7 +120,10 @@ models:
     data_type: DateTime
   config:
     contract:
-      enforced: true
+      # 2026-09-24 (docs/44 §6): 강제를 끈다. dbt-clickhouse 1.7.2 는 계약 타입을 그대로 DDL 로 쓰면서 비교 전에는
+      #   Nullable/LowCardinality 를 벗겨 비교한다. 수식자를 적으면 매 실행이 실패하고, 벗기면 물리 타입이 바뀌어
+      #   NULL 이 기본값(1970-01-01, 0)이 된다(09-24 01:27 실측: delisting_date 287/289). 아래 data_type 은 문서다.
+      enforced: false
 - name: dim_market_state_scd
   description: '**한 행 = (마켓, 상태 구간) 하나 - SCD type 2.** "이 마켓이 언제부터 언제까지 어떤 상태였나"에 답한다. 원천은 10분 폴링(`poll_market_state.py`). 이 정보는 **웹소켓 ticker 에만 있고 REST 에는 없다**(docs/34 #9). **한계**: 첫 구간의 `valid_from` 은
     관측 시작(2026-09-20)이라 ''적어도 그때부터''이지 ''그때부터''가 아니다.
@@ -170,7 +176,10 @@ models:
     data_type: UInt8
   config:
     contract:
-      enforced: true
+      # 2026-09-24 (docs/44 §6): 강제를 끈다. dbt-clickhouse 1.7.2 는 계약 타입을 그대로 DDL 로 쓰면서 비교 전에는
+      #   Nullable/LowCardinality 를 벗겨 비교한다. 수식자를 적으면 매 실행이 실패하고, 벗기면 물리 타입이 바뀌어
+      #   NULL 이 기본값(1970-01-01, 0)이 된다(09-24 01:27 실측: delisting_date 287/289). 아래 data_type 은 문서다.
+      enforced: false
 - name: dim_market_flag_scd
   description: '**한 행 = (마켓, 플래그, 지정 구간) 하나 - SCD type 2.** 업비트 시장경보가 언제부터 언제까지 걸려 있었나. 두 원천을 합친다: 거래소 공개 이력(2026-03-23~, 주의 5종)과 우리 1분 폴링(2026-09-16~, WARNING 은 여기에만 있다). **이상탐지 규칙 평가의 정답 라벨**이 이 표다.
 
@@ -208,7 +217,10 @@ models:
     data_type: Nullable(Int64)
   config:
     contract:
-      enforced: true
+      # 2026-09-24 (docs/44 §6): 강제를 끈다. dbt-clickhouse 1.7.2 는 계약 타입을 그대로 DDL 로 쓰면서 비교 전에는
+      #   Nullable/LowCardinality 를 벗겨 비교한다. 수식자를 적으면 매 실행이 실패하고, 벗기면 물리 타입이 바뀌어
+      #   NULL 이 기본값(1970-01-01, 0)이 된다(09-24 01:27 실측: delisting_date 287/289). 아래 data_type 은 문서다.
+      enforced: false
 - name: dim_exchange_notices
   description: '**한 행 = 거래소 공지 하나.** 수집 공백이 점검인지 유실인지 가르는 근거(docs/37). **분류를 카테고리로 하지 않는 이유**: 업비트 `category=''점검''` 은 대부분 신분증·원화 입출금이라 **거래를 멈추지 않는다**(실측 1,200건). 거래가 멈추는 것은 제목 `서버 점검 안내`(전 마켓)와 `… 거래
     지원 일시 중단`(코인별)뿐이다.
@@ -267,4 +279,7 @@ models:
     data_type: String
   config:
     contract:
-      enforced: true
+      # 2026-09-24 (docs/44 §6): 강제를 끈다. dbt-clickhouse 1.7.2 는 계약 타입을 그대로 DDL 로 쓰면서 비교 전에는
+      #   Nullable/LowCardinality 를 벗겨 비교한다. 수식자를 적으면 매 실행이 실패하고, 벗기면 물리 타입이 바뀌어
+      #   NULL 이 기본값(1970-01-01, 0)이 된다(09-24 01:27 실측: delisting_date 287/289). 아래 data_type 은 문서다.
+      enforced: false

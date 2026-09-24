@@ -13,7 +13,7 @@ models:
     description: 업비트 마켓 코드. 예 `KRW-BTC`. 원화 마켓만 수집한다.
     tests:
     - not_null
-    data_type: LowCardinality(String)
+    data_type: String
   - name: day_kst
     description: '**KST 기준 하루.** 체결 시각(거래소 체결 시각)을 Asia/Seoul 로 바꿔 자른 날짜. 적재 시각이 아니다.'
     tests:
@@ -168,5 +168,8 @@ models:
     data_type: UInt8
   config:
     contract:
-      enforced: true
+      # 2026-09-24 (docs/44 §6): 강제를 끈다. dbt-clickhouse 1.7.2 는 계약 타입을 그대로 DDL 로 쓰면서 비교 전에는
+      #   Nullable/LowCardinality 를 벗겨 비교한다. 수식자를 적으면 매 실행이 실패하고, 벗기면 물리 타입이 바뀌어
+      #   NULL 이 기본값(1970-01-01, 0)이 된다(09-24 01:27 실측: delisting_date 287/289). 아래 data_type 은 문서다.
+      enforced: false
     on_schema_change: fail
