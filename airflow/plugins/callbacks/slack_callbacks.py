@@ -111,8 +111,15 @@ def task_success_callback(context: dict[str, Any]) -> None:
 
 
 def sla_miss_callback(dag, task_list, blocking_task_list, slas, blocking_tis) -> None:
-    """SLA miss 시 Slack 알림."""
-    task_names = [t.task_id for t in task_list]
+    """SLA miss 시 Slack 알림.
+
+    2026-09-24: Airflow 2.8 은 task_list 를 태스크 객체 목록이 아니라 개행으로 이어 붙인 문자열로 넘긴다.
+    .task_id 로 순회하던 첫 판은 매 처리 주기마다 AttributeError 를 던졌고(09-20 SLA 도입 이후 나흘),
+    그 예외는 스케줄러 처리기 로그에만 남아 아무도 보지 못했다. 두 형태를 모두 받는다."""
+    if isinstance(task_list, str):
+        task_names = [ln.strip() for ln in task_list.splitlines() if ln.strip()]
+    else:
+        task_names = [getattr(t, "task_id", str(t)) for t in task_list]
     payload = {
         "blocks": [
             {
