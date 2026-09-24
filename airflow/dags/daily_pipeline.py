@@ -62,10 +62,11 @@ def _kst_day_bounds_ms(target_date: str) -> tuple[int, int]:
 
 default_args = {
     "owner": "calme",
-    # 2026-09-20 (docs/39 §2 ⑦): 증분 모델은 전날 결과 위에 쌓는다. 전날이 실패했는데 오늘이 돌면
-    # 구멍이 조용히 남는다 → 전날이 성공해야 오늘이 돈다.
-    # health_check 같은 '지금 상태' DAG 에는 걸지 않는다 - 과거 실패가 현재 점검을 막으면 안 된다.
-    "depends_on_past": True,
+    # 2026-09-20 (docs/39 §2 ⑦)에 True 로 걸었다가 2026-09-24 (docs/44 §6) 에 뺐다.
+    #   의도는 "전날이 실패했는데 오늘이 돌면 증분에 구멍이 조용히 남는다" 였는데, 실제로는 실패한 날이 하나 생기면
+    #   그 뒤 모든 날이 영원히 멈춘다(09-18 dbt_test 실패 -> 09-19 이후 전부 대기, 사람이 풀기 전까지). 구멍은
+    #   오늘을 막아서가 아니라 실패한 날을 다시 돌려서 메우는 것이고, 표가 굳는 것은 health_check 의 Mart Freshness 가 잡는다.
+    "depends_on_past": False,
     "retries": 2,
     "retry_delay": timedelta(minutes=5),
     "on_failure_callback": task_failure_callback,
@@ -79,6 +80,9 @@ with DAG(
     start_date=datetime(2026, 3, 11),
     catchup=False,
     tags=["dbt", "data-quality", "report"],
+    # 2026-09-24 (docs/44 §3·§6): 밀린 실행을 풀 때 임시로 2, 3 까지 올렸다가 되돌렸다. depends_on_past 와
+    #   max_active_runs=1 이 겹치면 실패한 run 이 재시도 슬롯을 못 받는 양방향 데드락이 생겼는데, 원인 쪽
+    #   (depends_on_past) 을 뺐으므로 1 로 둔다. 하루 한 번이 두 개 겹쳐 돌 이유가 없다.
     max_active_runs=1,
     sla_miss_callback=sla_miss_callback,
     params={"target_date": ""},  # 수동 트리거 시 날짜 지정 가능 (빈값=오늘 KST)
@@ -98,6 +102,7 @@ with DAG(
     # ── Step 1: dbt run ──────────────────────────────────────
     dbt_run = BashOperator(
         task_id="dbt_run",
+        pool="dbt",  # 2026-09-24 (docs/44 §6): dbt 를 부르는 태스크 5개가 한 풀(1슬롯)을 쓴다
         bash_command=(
             "cd /opt/airflow/dbt && "
             # 2026-09-20 (docs/40 ⑩ · docs/39 §3): 논리 날짜를 dbt 에 넘긴다.
@@ -112,6 +117,7 @@ with DAG(
     # ── Step 2: dbt test ─────────────────────────────────────
     dbt_test = BashOperator(
         task_id="dbt_test",
+        pool="dbt",
         bash_command=(
             "cd /opt/airflow/dbt && "
             'dbt test --profiles-dir /opt/airflow/dbt_profiles --vars \'{"run_date": "{{ ds }}"}\' 2>&1'
