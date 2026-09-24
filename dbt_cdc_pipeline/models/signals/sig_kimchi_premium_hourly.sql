@@ -10,7 +10,9 @@ WITH px AS (
     FROM {{ ref('int_venue_hourly_close') }} GROUP BY coin_id, hour_utc
     HAVING upbit_trades >= 10 AND binance_trades >= 10
 )
-SELECT p.hour_utc AS hour_utc, p.coin_id AS coin_id, p.upbit_krw AS upbit_krw, p.binance_usdt AS binance_usdt, f.usdt_krw_close AS usdt_krw,
+-- 2026-09-24 (docs/45): coin_id 는 계약이 LowCardinality(String) 이라 맞춘다(int_venue_hourly_close 는 String).
+--   주석을 SELECT 목록 줄 끝에 달면 계약 검사가 쿼리를 한 줄로 접으면서 뒤 컬럼이 사라진다('missing in definition').
+SELECT p.hour_utc AS hour_utc, toLowCardinality(p.coin_id) AS coin_id, p.upbit_krw AS upbit_krw, p.binance_usdt AS binance_usdt, f.usdt_krw_close AS usdt_krw,
        toFloat64(p.binance_usdt) * toFloat64(f.usdt_krw_close) AS binance_krw_equiv,
        round(100 * (toFloat64(p.upbit_krw) / nullIf(toFloat64(p.binance_usdt) * toFloat64(f.usdt_krw_close), 0) - 1), 3) AS premium_pct,
        p.upbit_trades AS upbit_trades, p.binance_trades AS binance_trades

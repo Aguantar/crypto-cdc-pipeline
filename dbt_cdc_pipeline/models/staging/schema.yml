@@ -97,7 +97,8 @@ models:
           이 변환이 없으면 Upbit 과 부호가 반대가 된다(docs/34 #4).
         tests:
           - accepted_values:
-              values: ['ASK', 'BID']
+              arguments:
+                values: ['ASK', 'BID']
       - name: trade_ts
         description: "거래소 체결 시각(UTC)."
       - name: trade_ms

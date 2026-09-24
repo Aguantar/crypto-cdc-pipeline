@@ -173,7 +173,8 @@ models:
         tests:
           - not_null
           - accepted_values:
-              values: ['reconnect', 'startup', 'manual']
+              arguments:
+                values: ['reconnect', 'startup', 'manual']
       - name: repairs
         description: "수리 창 수."
       - name: exchange_rows_in_windows

@@ -1,4 +1,7 @@
 version: 2
+# 2026-09-24 (docs/45): 계약(contract) 9개를 다시 강제한다. data_type 은 물리 타입 그대로(Nullable/LowCardinality 포함).
+#   dbt-clickhouse 1.7.2 는 이 수식자를 비교 때만 벗겨 매 실행이 깨졌고(docs/44 §2-2), 1.10.0 으로 올려 해결했다.
+#   generic test 인자는 dbt 1.10+ 문법(arguments:, config:)으로 바꿨다 - 1.7 어댑터로는 이 파일을 못 읽는다.
 models:
 - name: mart_daily_summary
   description: '**한 행 = (마켓, KST 하루) 하나.** 일별 종합 리포트가 읽는 표. 하루 경계는 KST 다(리포트를 한국 시간으로 읽기 때문). 대조·품질 표의 `day_utc` 와 뜻이 다르므로 섞어 쓰지 않는다(docs/34 #3). 금액·수량·가격은 Decimal, 비율·파생 지표는 Float64 라는 타입 규약을 따른다(docs/34
@@ -13,7 +16,7 @@ models:
     description: 업비트 마켓 코드. 예 `KRW-BTC`. 원화 마켓만 수집한다.
     tests:
     - not_null
-    data_type: String
+    data_type: LowCardinality(String)
   - name: day_kst
     description: '**KST 기준 하루.** 체결 시각(거래소 체결 시각)을 Asia/Seoul 로 바꿔 자른 날짜. 적재 시각이 아니다.'
     tests:
@@ -168,8 +171,5 @@ models:
     data_type: UInt8
   config:
     contract:
-      # 2026-09-24 (docs/44 §6): 강제를 끈다. dbt-clickhouse 1.7.2 는 계약 타입을 그대로 DDL 로 쓰면서 비교 전에는
-      #   Nullable/LowCardinality 를 벗겨 비교한다. 수식자를 적으면 매 실행이 실패하고, 벗기면 물리 타입이 바뀌어
-      #   NULL 이 기본값(1970-01-01, 0)이 된다(09-24 01:27 실측: delisting_date 287/289). 아래 data_type 은 문서다.
-      enforced: false
+      enforced: true
     on_schema_change: fail

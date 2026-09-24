@@ -172,7 +172,8 @@ models:
         description: "거래소. `upbit` 또는 `binance`."
         tests:
           - accepted_values:
-              values: ['upbit', 'binance']
+              arguments:
+                values: ['upbit', 'binance']
       - name: hour_utc
         description: "UTC 시간 버킷. 두 거래소가 같은 버킷이어야 비교가 성립한다."
       - name: close
