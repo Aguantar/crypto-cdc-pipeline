@@ -35,6 +35,14 @@ INCIDENT_STAGE = {
     "ClickHouse Insert Latency":("clickhouse", "cdc-clickhouse"),
     "ClickHouse Ingest":        ("clickhouse", "cdc_pipeline.crypto_trades"),
     "Ledger Reconcile Stale":   ("orchestration", "virtual-trader"),
+    "Mart Freshness":           ("orchestration", "dbt"),
+    # 2026-09-24 (docs/44 §6): 아래 5개는 이름이 있는데 매핑이 없어 09-20~24 사건 53건 중 46건이 unknown 으로 쌓였다.
+    #   접두사 매칭은 키가 이름보다 짧을 때만 돕는다 ("Ledger Reconcile" 은 "Ledger Reconcile Stale" 에 안 걸린다).
+    "Ledger Reconcile":         ("collect",    "virtual-trader"),
+    "ClickHouse Insert Stall":  ("clickhouse", "cdc-clickhouse"),
+    "ClickHouse":               ("clickhouse", "cdc-clickhouse"),
+    "Kafka/Pipeline":           ("kafka",      "cdc-kafka-1"),
+    "Upbit Producer":           ("collect",    "cdc-upbit-producer"),
 }
 
 
@@ -342,6 +350,21 @@ with DAG(
         result_type="first",
     )
 
+    # ── 파생 표 신선도 (2026-09-24, docs/44) ────────────────────
+    # 09-10~09-24 에 dbt 가 멈춰 대조·마트가 나흘 전 값에 머물렀는데 어디서도 안 울렸다.
+    # 적재는 멀쩡하고 Airflow 도 살아 있어서 "살아있나" 를 보는 어떤 감시도 잡지 못했다.
+    # 일일 파이프라인은 16:00 UTC 에 전날을 계산하므로 정상 지연은 최대 2일. 그보다 오래되면 dbt 정지다.
+    check_mart_freshness = ClickHouseOperator(
+        task_id="check_mart_freshness",
+        sql="""
+            SELECT
+              (SELECT dateDiff('day', max(day_utc), today()) FROM cdc_pipeline.dq_reconcile_daily) AS reconcile_days,
+              (SELECT dateDiff('day', max(day_kst), today()) FROM cdc_pipeline.mart_daily_summary) AS summary_days,
+              (SELECT dateDiff('day', toDate(max(minute)), today()) FROM cdc_pipeline.mart_trade_orderbook_1m) AS ob1m_days
+        """,
+        result_type="first",
+    )
+
     # ── Binance 체결 적재 (2026-09-20, docs/31): 수집기·잡 어느 쪽이 멈춰도 60초 0행으로 드러난다. 24h 평균 361/s 라 60초 0 은 확실한 이상
     check_binance_ingest = ClickHouseOperator(
         task_id="check_binance_ingest",
@@ -384,8 +407,17 @@ with DAG(
         parse_result = ti.xcom_pull(task_ids="check_parse_failures")
         ledger_result = ti.xcom_pull(task_ids="check_ledger_reconcile")
         binance_result = ti.xcom_pull(task_ids="check_binance_ingest")
+        fresh_result = ti.xcom_pull(task_ids="check_mart_freshness")
 
         unhealthy = []
+
+        # 파생 표 신선도: 어느 하나라도 2일 넘게 안 갱신되면 dbt 가 멈춘 것이다
+        if fresh_result:
+            stale = {k: int(v) for k, v in fresh_result.items() if v is not None and int(v) > 2}
+            if stale:
+                unhealthy.append({"name": "Mart Freshness",
+                                  "message": "dbt 산출물이 갱신되지 않음: " + ", ".join(f"{k}={v}일" for k, v in stale.items())
+                                             + " (daily_pipeline dbt_run/dbt_test 이력 확인)"})
 
         # Binance 체결: 60초 0행 또는 e2e p95 > 30s
         if binance_result is not None:
@@ -527,16 +559,30 @@ with DAG(
             unhealthy.append({"name": "Kafka Connect", "message": msg})
 
         if unhealthy:
-            send_health_alert(unhealthy)
             ti.log.warning("Health check FAILED: %s", unhealthy)
+            # 2026-09-24 (docs/44 §6): 같은 이름은 한 시간에 한 번만 Slack 으로 보낸다. dedup_key 를 기록에만 넣고
+            #   발송에는 안 쓴 탓에 09-22~23 에 'Ledger Reconcile' 하나가 10분마다 울려 하루 101·120건이 갔다.
+            #   alert_events 는 '실제로 보낸 것' 만 남기고(그래서 이 표가 곧 억제 기준), pipeline_incidents 는 전부 남긴다.
+            import json as _json
+            from hooks.clickhouse_hook import ClickHouseHook
+            hook = ClickHouseHook()
+            try:
+                recent = {r["name"] for r in hook.get_records(
+                    "SELECT DISTINCT name FROM cdc_pipeline.alert_events WHERE source = 'health_check' AND fired_at >= now() - INTERVAL 1 HOUR")}
+            except Exception as e:  # noqa: BLE001
+                ti.log.warning("alert_events lookup failed, sending without dedup: %s", e)
+                recent = set()
+            to_send = [u for u in unhealthy if u["name"] not in recent]
+            if to_send:
+                send_health_alert(to_send)
+            else:
+                ti.log.info("Slack suppressed (sent within the last hour): %s", [u["name"] for u in unhealthy])
             # 2026-09-20 (docs/32): 울린 알럿을 데이터로 - 주간 다이제스트가 반복·임계 재검토 대상을 집계한다
             try:
-                import json as _json
-                from hooks.clickhouse_hook import ClickHouseHook
                 now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"); hour = datetime.utcnow().strftime("%Y-%m-%dT%H")
-                hook = ClickHouseHook()
-                rows = [{"fired_at": now, "source": "health_check", "name": u["name"], "severity": "immediate", "message": str(u["message"])[:500], "dedup_key": f"{u['name']}:{hour}"} for u in unhealthy]
-                hook.execute("INSERT INTO cdc_pipeline.alert_events FORMAT JSONEachRow\n" + "\n".join(_json.dumps(r, ensure_ascii=False) for r in rows))
+                rows = [{"fired_at": now, "source": "health_check", "name": u["name"], "severity": "immediate", "message": str(u["message"])[:500], "dedup_key": f"{u['name']}:{hour}"} for u in to_send]
+                if rows:
+                    hook.execute("INSERT INTO cdc_pipeline.alert_events FORMAT JSONEachRow\n" + "\n".join(_json.dumps(r, ensure_ascii=False) for r in rows))
                 # 2026-09-20 (docs/41): 같은 사건을 단계 축으로도 남긴다.
                 # alert_events 는 '무엇이 울렸나', pipeline_incidents 는 '어느 단계가 깨졌나' 에 답한다.
                 inc = []
@@ -572,6 +618,7 @@ with DAG(
             check_parse_failures,
             check_ledger_reconcile,
             check_binance_ingest,
+            check_mart_freshness,
         ]
         >> evaluate_health
     )
