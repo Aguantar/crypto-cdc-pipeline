@@ -188,6 +188,7 @@ with DAG(
     # dbt build = run + test. 모델 int_reconcile_hourly 와 그 모델을 참조하는 테스트(유실·커버리지)가 함께 실행된다.
     dbt_build_reconcile = BashOperator(
         task_id="dbt_build_reconcile",
+        pool="dbt",  # 2026-09-24 (docs/44 §6): dbt 는 DAG 을 넘어 한 번에 하나만 (같은 모델 동시 빌드 -> __dbt_backup 충돌)
         bash_command=(
             "cd /opt/airflow/dbt && dbt build --select +int_reconcile_hourly "
             "--vars '{\"reconcile_date\": \"{{ params.target_date or ds }}\"}' "

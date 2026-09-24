@@ -35,6 +35,7 @@ with DAG(
 
     dbt_build_rules = BashOperator(
         task_id="dbt_build_rules",
+        pool="dbt",  # 2026-09-24 (docs/44 §6): 09-24 01:16 daily_pipeline 재시도와 겹쳐 int_volume_surge_daily 가 깨졌다
         bash_command=(
             "cd /opt/airflow/dbt && dbt build --select int_volume_surge_daily dq_rule_eval_daily int_alert_transitions_recomputed dq_alert_parity_daily "
             "--profiles-dir /opt/airflow/dbt_profiles 2>&1"

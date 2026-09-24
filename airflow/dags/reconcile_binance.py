@@ -70,6 +70,6 @@ with DAG(
     max_active_runs=1,
 ) as dag:
     fetch_hourly_candles = PythonOperator(task_id="fetch_hourly_candles", python_callable=_fetch_hourly_candles, pool="default_pool")
-    dbt_reconcile = BashOperator(task_id="dbt_reconcile", bash_command="cd /opt/airflow/dbt && dbt run --profiles-dir /opt/airflow/dbt_profiles --select dq_binance_reconcile_daily 2>&1")
+    dbt_reconcile = BashOperator(task_id="dbt_reconcile", pool="dbt", bash_command="cd /opt/airflow/dbt && dbt run --profiles-dir /opt/airflow/dbt_profiles --select dq_binance_reconcile_daily 2>&1")
     fetch_exchange_info = PythonOperator(task_id="fetch_exchange_info", python_callable=_fetch_exchange_info)
     fetch_exchange_info >> fetch_hourly_candles >> dbt_reconcile
