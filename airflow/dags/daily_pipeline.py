@@ -293,10 +293,13 @@ with DAG(
         target_date = _get_target_date(context)
         ms0, ms1 = _kst_day_bounds_ms(target_date)
         hook = ClickHouseHook()
+        # 2026-09-24 (docs/44 §5): FINAL 을 붙였다. crypto_trades 는 09-18 부터 ReplacingMergeTree 라 머지 전 행은
+        # 표에 남아 있어도 읽을 때 사라진다(docs/34 #2 의 읽기 규칙). 이 쿼리만 FINAL 이 없어 컷오버 날(09-19 KST)
+        # 복사분 160,384건을 "중복 적재" 로 세고 리포트를 막았다. FINAL 로는 0.
         result = hook.get_scalar(
             f"""
             SELECT count() - uniqExact(source_ts, trade_id) AS dup_rows
-            FROM cdc_pipeline.crypto_trades
+            FROM cdc_pipeline.crypto_trades FINAL
             WHERE upbit_timestamp >= {ms0} AND upbit_timestamp < {ms1}
             SETTINGS max_memory_usage = 500000000, max_threads = 2
             """
