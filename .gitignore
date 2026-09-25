@@ -35,6 +35,7 @@ docs/*
 !docs/32-slo-and-alerting.md
 !docs/35-data-inventory.md
 !docs/36-metrics.md
+!docs/48-silent-pipeline-incident.md
 
 # ── 로컬 전용 문서·이미지 ─────────────────────────────────
 blog-post-*.md
