@@ -3,6 +3,7 @@
         materialized='incremental',
         incremental_strategy='delete+insert',
         unique_key='hour_kst',
+        on_schema_change='fail',
         order_by='market, hour_kst'
     )
 }}

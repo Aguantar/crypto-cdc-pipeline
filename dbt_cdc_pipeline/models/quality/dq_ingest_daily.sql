@@ -1,4 +1,4 @@
-{{ config(materialized='incremental', incremental_strategy='delete+insert', unique_key='day_utc', order_by='day_utc') }}
+{{ config(materialized='incremental', incremental_strategy='delete+insert', on_schema_change='fail', unique_key='day_utc', order_by='day_utc') }}
 -- 2026-09-20 (docs/34 #2): crypto_trades 는 ReplacingMergeTree - 중복은 '결국' 지워지므로 읽는 쪽이 FINAL 로 보장한다(재시작 뒤 머지 전 배치가 중복을 세지 않게)
 -- 일별 적재 품질: 지연 분위수, 늦은 행(가드 대상), 마켓 수. 증분(전날~오늘)만 재계산 - 1억 행 전체를 매일 훑지 않기 위해.
 -- 지연 = source_ts(MySQL 적재) − upbit_timestamp(체결). 관찰 주간 기준값: p50 1.2s, p95 2.2s, max 7.75s (docs/14).

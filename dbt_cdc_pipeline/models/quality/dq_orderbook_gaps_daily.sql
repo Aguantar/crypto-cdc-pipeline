@@ -1,4 +1,4 @@
-{{ config(materialized='incremental', incremental_strategy='delete+insert', unique_key='day_utc', order_by='day_utc') }}
+{{ config(materialized='incremental', incremental_strategy='delete+insert', on_schema_change='fail', unique_key='day_utc', order_by='day_utc') }}
 -- 호가 유실 창 기록 (2026-09-17, docs/23 §6 → 브로커 축소 선행 조건). 호가는 거래소 이력 API 도, 우리 원장도 없어서 못 받은 순간 영구 유실이다.
 -- 체결의 ingest_repairs 처럼 "언제 얼마나 비었나"를 표로 남겨 하류가 그 구간을 알고 쓰게 한다.
 -- 정의: 수집기 수신 시각(recv_ts) 기준 초당 스냅샷 수. 평시엔 전 마켓 합계가 초당 100 건 이상(09-16: p01 109, min 43, 0 인 초 0) 이라

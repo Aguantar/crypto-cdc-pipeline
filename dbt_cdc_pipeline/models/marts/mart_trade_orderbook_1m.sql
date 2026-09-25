@@ -1,4 +1,4 @@
-{{ config(materialized='incremental', incremental_strategy='delete+insert', unique_key='day_utc', order_by='(market, minute)',
+{{ config(materialized='incremental', incremental_strategy='delete+insert', on_schema_change='fail', unique_key='day_utc', order_by='(market, minute)',
           query_settings={'max_memory_usage': 1200000000, 'max_bytes_before_external_group_by': 500000000}) }}
 -- 2026-09-20 (docs/34 #5) 타입 규약: 금액·수량 합계는 Decimal, 비율은 Float64.
 --   이유: Decimal 나눗셈은 분모가 0 이면 예외를 던져 모델 전체가 실패한다(Float64 는 조용히 inf). if(v>0, a/v, 0) 가드도 ClickHouse 가 양쪽 분기를 다 계산해 소용없다(09-20 실측).
