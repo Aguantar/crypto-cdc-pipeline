@@ -31,12 +31,8 @@ from callbacks.slack_callbacks import task_failure_callback
 BACKUP_EXCLUDE = {
     # 호가 원본: 같은 DAG 이 하루치를 Parquet(zstd, 원격 120일)으로 따로 내보낸다. 백업에 또 넣으면 두 배다.
     "orderbook_raw",
-    # 아래 넷은 전환 롤백본이다. 살아 있는 표가 이미 백업에 들어가므로 같은 데이터를 두 번 담는 꼴이고,
-    # 삭제 예정일이 정해져 있다(docs/35). 09-20 증분이 8.7GB 가 된 원인이 이것이었다.
-    "crypto_trades_rmt",          # 09-25 삭제 예정 (RMT 전환 롤백본, docs/25)
-    "crypto_trades_v2",           # 09-26 삭제 예정 (체결 시각 파티션 전환 롤백본, docs/28 A-7)
-    "crypto_trades_float_bak",    # 09-27 삭제 예정 (Decimal 전환 롤백본, docs/34 §5)
-    "binance_trades_float_bak",   # 09-27 삭제 예정 (같음)
+    # 2026-09-25: 전환 롤백본 넷(crypto_trades_rmt·_v2·*_float_bak)은 이날 전부 DROP 했다(docs/48). 09-20 증분이
+    # 8.7GB 가 된 원인이 그 넷이었고, 살아 있는 표만 남았으니 여기 적을 것이 없다.
 }
 # binance_orderbook_raw 는 일부러 넣는다. Parquet 아카이브가 없어 백업이 30일 TTL 밖의 유일한 사본이고,
 # 23 MiB 라 비용이 사실상 없다. docs/34 #10 의 원래 계획("Binance 표 제외")을 실측 뒤 뒤집은 것 - 제외 기준은
