@@ -31,3 +31,13 @@ CREATE TABLE IF NOT EXISTS cdc_pipeline.cron_heartbeats
     detail String                    -- 그 폴링의 요약 (마켓 수 등)
 )
 ENGINE = MergeTree ORDER BY (job, ts) TTL ts + INTERVAL 30 DAY;
+
+-- 2026-09-25 (docs/48 §7, docs/46): 수집기 자기 지표. 09-23 급등 때 수집기가 12.8초 뒤처져 3.6% 를 잃었는데
+-- deliv_err·buf_err 는 0 이었고 대조만 잡았다. STATS 줄의 lag·queue 를 5분마다 남겨 "지금 잃고 있다" 를 health_check 가 보게 한다.
+CREATE TABLE IF NOT EXISTS cdc_pipeline.collector_stats_5m
+(
+    ts DateTime, collector LowCardinality(String),
+    recv UInt64, produced UInt64, deliv_err UInt32, buf_err UInt32, queue UInt32, conns UInt8, reconnects UInt32,
+    lag_p50_ms UInt32, lag_p95_ms UInt32
+)
+ENGINE = MergeTree ORDER BY (collector, ts) TTL ts + INTERVAL 90 DAY;

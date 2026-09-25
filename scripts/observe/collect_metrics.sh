@@ -108,3 +108,15 @@ FJ=$(curl -s --max-time 10 localhost:8081/jobs/overview | python3 -c "import sys
 FB=$(for j in $(curl -s --max-time 10 localhost:8081/jobs/overview | python3 -c "import sys,json; print(' '.join(j['jid'] for j in json.load(sys.stdin)['jobs'] if j['state']=='RUNNING'))" 2>/dev/null); do v=$(curl -s --max-time 10 localhost:8081/jobs/$j | python3 -c "import sys,json; print(next(x['id'] for x in json.load(sys.stdin)['vertices'] if x['name'].startswith('Source')))" 2>/dev/null); curl -s --max-time 10 -G "localhost:8081/jobs/$j/vertices/$v/subtasks/metrics" --data-urlencode "get=busyTimeMsPerSecond" --data-urlencode "agg=max" | python3 -c "import sys,json; m=json.load(sys.stdin); print(m[0]['max'] if m else 0)" 2>/dev/null; done | sort -n | tail -1)
 chw "INSERT INTO cdc_pipeline.ops_metrics_5m FORMAT CSV
 $(date -u +%Y-%m-%d\ %H:%M:%S),${L1:-0},${L5:-0},${MU:-0},${MA:-0},${SU:-0},${DU:-0},${DF:-0},$(cpu_of cdc-kafka-1),$(cpu_of cdc-flink-taskmanager),$(cpu_of cdc-clickhouse),$(cpu_of cdc-mysql),${CPU_COLL:-0},$(mem_of cdc-kafka-1),$(mem_of cdc-flink-taskmanager),$(mem_of cdc-clickhouse),$(mem_of cdc-mysql),$(mem_of cdc-airflow-scheduler),${UP5:-0},${BN5:-0},${OB5:-0},${UPP95:-0},${BNP95:-0},${FJ:-0},${FB:-0}"
+
+# --- 2026-09-25 (docs/48 §7): 수집기 STATS 의 lag·queue 를 collector_stats_5m 에. 급등 때 수집기가 뒤처지는 것은
+# deliv_err 로 안 보이고 lag_p95 로만 보인다(09-23 14:13 lag_p95 12,830ms 뒤 연결 끊김). 없는 필드는 0.
+TS_NOW=$(date -u +%Y-%m-%d\ %H:%M:%S); ROWS=""
+for c in cdc-binance-collector cdc-binance-depth-collector cdc-orderbook-collector; do
+  S=$(docker logs "$c" --tail 60 2>&1 | grep '\[STATS\]' | tail -1)
+  f(){ echo "$S" | sed -n "s/.*[[:space:]]$1=\([0-9]*\).*/\1/p" | head -1; }
+  [ -n "$S" ] && ROWS="$ROWS$TS_NOW,${c#cdc-},$(f recv | sed 's/^$/0/'),$(f produced | sed 's/^$/0/'),$(f deliv_err | sed 's/^$/0/'),$(f buf_err | sed 's/^$/0/'),$(f queue | sed 's/^$/0/'),$(f conns | sed 's/^$/0/'),$(f reconnects | sed 's/^$/0/'),$(f lag_p50 | sed 's/^$/0/'),$(f lag_p95 | sed 's/^$/0/')
+"
+done
+[ -n "$ROWS" ] && chw "INSERT INTO cdc_pipeline.collector_stats_5m FORMAT CSV
+$ROWS"

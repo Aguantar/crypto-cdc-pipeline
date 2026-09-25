@@ -43,6 +43,7 @@ INCIDENT_STAGE = {
     "ClickHouse":               ("clickhouse", "cdc-clickhouse"),
     "Kafka/Pipeline":           ("kafka",      "cdc-kafka-1"),
     "Upbit Producer":           ("collect",    "cdc-upbit-producer"),
+    "Binance Collector Lag":    ("collect",    "cdc-binance-collector"),
 }
 
 
@@ -376,6 +377,21 @@ with DAG(
         result_type="first",
     )
 
+    # ── 수집기 자기 지표 (2026-09-25, docs/48 §7): 09-23 급등 때 수집기가 12.8초 뒤처져 3.6% 를 잃었는데 deliv_err 는 0 이었다.
+    # 뒤처짐은 STATS 의 lag_p95 와 queue 에만 나타난다. collect_metrics.sh 가 5분마다 남긴 최근 15분 최대값을 본다.
+    # 평시 lag_p95 는 20~60ms, queue 는 수십. 09-23 사건은 lag_p95 1,600 → 12,830ms, queue 570 → 732 였다.
+    check_collector_lag = ClickHouseOperator(
+        task_id="check_collector_lag",
+        sql="""
+            SELECT max(lag_p95_ms) AS lag_p95_ms, max(queue) AS queue_max,
+                   max(reconnects) - min(reconnects) AS reconnects_15m,
+                   dateDiff('minute', max(ts), now()) AS minutes_since_sample
+            FROM cdc_pipeline.collector_stats_5m
+            WHERE collector = 'binance-collector' AND ts >= now() - INTERVAL 15 MINUTE
+        """,
+        result_type="first",
+    )
+
     check_insert_latency = ClickHouseOperator(
         task_id="check_insert_latency",
         sql="""
@@ -407,6 +423,7 @@ with DAG(
         parse_result = ti.xcom_pull(task_ids="check_parse_failures")
         ledger_result = ti.xcom_pull(task_ids="check_ledger_reconcile")
         binance_result = ti.xcom_pull(task_ids="check_binance_ingest")
+        collector_result = ti.xcom_pull(task_ids="check_collector_lag")
         fresh_result = ti.xcom_pull(task_ids="check_mart_freshness")
 
         unhealthy = []
@@ -418,6 +435,16 @@ with DAG(
                 unhealthy.append({"name": "Mart Freshness",
                                   "message": "dbt 산출물이 갱신되지 않음: " + ", ".join(f"{k}={v}일" for k, v in stale.items())
                                              + " (daily_pipeline dbt_run/dbt_test 이력 확인)"})
+
+        # 수집기 뒤처짐: 최근 15분 lag_p95 > 2초 또는 큐 > 500 이면 잃고 있을 가능성. 표본이 없으면(collect_metrics 정지) 그것도 알린다
+        if collector_result is not None:
+            lag_ms = int(collector_result.get("lag_p95_ms") or 0); q = int(collector_result.get("queue_max") or 0)
+            since = collector_result.get("minutes_since_sample")
+            if since is None or int(since) > 15:
+                unhealthy.append({"name": "Binance Collector Lag", "message": f"collector_stats_5m 표본 없음 ({since}분) - collect_metrics.sh cron 확인"})
+            elif lag_ms > 2000 or q > 500:
+                unhealthy.append({"name": "Binance Collector Lag",
+                                  "message": f"lag_p95 {lag_ms}ms (> 2000) queue {q} (> 500) reconnects_15m {collector_result.get('reconnects_15m')} - 급등 구간 유실 가능 (docs/48 §7)"})
 
         # Binance 체결: 60초 0행 또는 e2e p95 > 30s
         if binance_result is not None:
@@ -619,6 +646,7 @@ with DAG(
             check_ledger_reconcile,
             check_binance_ingest,
             check_mart_freshness,
+            check_collector_lag,
         ]
         >> evaluate_health
     )
