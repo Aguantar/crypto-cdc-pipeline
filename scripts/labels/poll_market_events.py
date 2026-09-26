@@ -53,6 +53,9 @@ def main():
     insert(rows)
     tmp = STATE + '.tmp'
     json.dump(cur, open(tmp, 'w'))
+    # 2026-09-26 (docs/46 §1 확장): 이 표도 전이만 적재하므로 09-25 01:50 에 "market_events 49분 정지" 오경보가 났다(그 시간 cron 은 매분 돌았다).
+    subprocess.run(['docker', 'exec', '-i', 'cdc-clickhouse', 'clickhouse-client', '-q', 'INSERT INTO cdc_pipeline.cron_heartbeats FORMAT JSONEachRow'],
+                   input=json.dumps({'job': 'market_events', 'ts': now, 'detail': f'markets={len(cur)} rows={len(rows)}'}), text=True, capture_output=True)
     os.replace(tmp, STATE)
     print(f'{now} markets={len(cur)} rows={len(rows)}')
 
