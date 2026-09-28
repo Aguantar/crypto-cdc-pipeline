@@ -28,7 +28,7 @@
                               Debezium --> Kafka --> Flink --> ClickHouse
                                                       ^
 [Upbit WS 호가] ----------------------> Kafka --------+   (원장 없이 직행)
-[Binance WS 체결 493심볼] -------------> Kafka --------+
+[Binance WS 체결 493심볼] -------------> Kafka --> ClickHouse Kafka 엔진 + MV (2026-09-28, Flink 잡에서 옮김)
 [Binance WS depth 증분] ---------------> Kafka --> Flink 키별 상태로 호가장 재구성
 
 [2층] Binance Testnet 주문 --> MySQL 미러 --> 2번째 Debezium(삭제 보존) --> ClickHouse RMT
@@ -65,7 +65,7 @@ marts 2, signals 2, quality 9. 품질 표는 전부 `dq_` 로 시작합니다.
 | MySQL 원장 → Debezium → Kafka | 되돌릴 수 없는 데이터에 원본을 남긴다 | 맞았다. 브로커 전부 정지 실험 4/4 에서 체결을 지켰다 |
 | 가상 매매로 2층 원장 | 체결만으로는 CDC 가 큐와 같아서 | 맞았다. 상태 변경을 거래소 엔진이 만든다 |
 | Kafka | 버퍼, 오프셋 재개, 이미 있던 클러스터 | 필요했다. 브로커는 3에서 1로 줄였고 그 경계를 실험으로 쟀다 |
-| Flink | 이벤트 시각 처리와 키별 상태, 그리고 써 보고 싶었다 | 이 규모엔 과했다. 4잡 중 1잡만 상태가 본체 |
+| Flink | 이벤트 시각 처리와 키별 상태, 그리고 써 보고 싶었다 | 이 규모엔 과했다. 4잡 중 1잡만 상태가 본체. 상태 없는 잡 하나는 실측 뒤 ClickHouse MV 로 옮겼다 |
 | ClickHouse | 시계열 집계에 흔히 쓰이고 한 대에서 큰 표를 버틴다고 알려져서 | 맞았다. 근거(압축 14:1, 선택적 읽기)는 사후에 쟀고 대안과 비교한 적은 없다 |
 | ReplacingMergeTree + FINAL | exactly-once 대신 저장소가 중복을 흡수 | 맞았다. 대가는 FINAL 의 읽기 비용이고 전체 이력 모델 하나가 그것 때문에 죽었다 |
 | dbt | 변환에 테스트·계약·문서를 붙이려고 | 맞았다. 다만 테스트가 열흘간 실패해도 dbt 는 스스로 알리지 않는다 |
@@ -291,8 +291,24 @@ View 로 됩니다. 분 종가 판정은 1분 주기 SQL 로 충분하고, 그 �
 다시 고른다면 저장소와 스케줄러가 대부분을 하게 두고 키별 상태가 필요한 잡 하나만 가벼운 소비자로
 둡니다. Spark 는 같은 이유로 답이 아닙니다.
 
-아직 안 뺀 이유는 한 번에 한 가지만 바꾸기 때문입니다. 다음 단계는 가장 단순한 파싱 잡 하나를 MV 로
-옮겨 하루 병행 적재하고 셀 단위로 대조해 전후를 재는 것이고, 그 숫자가 나오면 순서대로 뺍니다.
+한 번에 한 가지만 바꾸기 때문에 순서대로 뺍니다. 첫 번째로 가장 단순한 `Binance Trade Pipeline` 을
+ClickHouse Kafka 엔진 + Materialized View 로 옮겼습니다. 옆에 그림자 표를 세워 47시간 병행 적재하고 잰 결과입니다.
+
+| 항목 | Flink 잡 | Kafka 엔진 + MV |
+|---|---|---|
+| 값 (심볼 × 시간 24,262셀, 4,930만 행) | 기준 | 행 수·수량 합 불일치 0, 피크 10분 469,353건 여섯 값 전부 일치 |
+| 중복 (일별, FINAL 대비) | 0 | 0 |
+| 적재 지연 p95 | 2.90초 | 3.56초 (flush 3초의 몫) |
+| 파트 생성 (48시간) | 125,176 | 51,494 (−59%) |
+| 머지 (48시간) | 40,402회, 0.54 코어시간 | 11,326회, 0.17 코어시간 (−72%) |
+| ClickHouse 기준선 메모리 | 769 MiB | 807 MiB (+38) |
+| 급등(초당 5,000 이상) | 미측정 | 미측정. 다음 급등에서 거래소 대조가 잰다 |
+
+9월 28일에 컷오버했습니다. MV 가 살아 있는 표에 쓰기 시작한 20초 뒤 Flink 잡을 취소했고, 겹친 구간의
+중복은 ReplacingMergeTree 가 접었습니다. 표 기준 정지 0초. 남은 Flink 잡은 셋이고, 다음은 `Orderbook Pipeline`
+(1분 윈도우, MV 둘로 가능)입니다. 이상탐지는 1분 SQL 로 옮긴 뒤에야 CDC 잡을 뺄 수 있고, 호가장 재구성은
+마지막까지 남습니다. Flink 잡 하나를 빼도 TaskManager 의 1 GB 는 JVM 설정값이라 줄지 않습니다. 그 회수는
+Flink 자체를 뺄 때만 옵니다. 전말은 [docs/50](docs/50-binance-trade-mv.md) 에 있습니다.
 Flink 를 운영하며 얻은 것도 있습니다. 부하 실험에서 병목이 스트림 엔진이 아니라 동기 JDBC 싱크였다는
 것을 찾았고, 재기동 때 중복이 어떻게 생기는지를 쟀습니다. "엔진이 필요 없다" 는 판단의 근거가 그 경험입니다.
 
@@ -448,7 +464,7 @@ scripts/check-health.sh
 | MySQL | 8.0.45 | 체결 원장, 이벤트 시각 일 파티션. 2층 가상 원장 미러 |
 | Debezium / Kafka Connect | cp 7.5.3 | binlog CDC. 아카이브 모드와 미러 모드 두 커넥터 |
 | Kafka | cp 7.5.3 (Kafka 3.5) | 브로커 1대, 토픽 23개 (다른 프로젝트와 공유) |
-| Flink | 1.18.1 | 잡 4개. 키별 상태 호가장 재구성, 분 종가 기준 이상탐지 |
+| Flink | 1.18.1 | 잡 3개 (Binance 체결 적재는 9월 28일 ClickHouse MV 로 이전). 키별 상태 호가장 재구성, 분 종가 기준 이상탐지 |
 | ClickHouse | 24.1.8.22 | 표 77개. ReplacingMergeTree, 월·일 파티션 |
 | dbt | 1.11.6 (clickhouse 1.10.0) | 모델 27개, 계약 9개, 테스트 81개. 9월 24일 1.7 에서 올림 |
 | Airflow | 2.8.1 | DAG 11개, LocalExecutor |
@@ -458,6 +474,7 @@ scripts/check-health.sh
 
 저장소에는 결과와 근거 중심으로만 남겼습니다.
 
+- [docs/50](docs/50-binance-trade-mv.md) Flink 잡 하나를 ClickHouse MV 로 옮긴 실측
 - [docs/48](docs/48-silent-pipeline-incident.md) 16일간 조용히 멈춰 있던 파이프라인
 - [docs/23](docs/23-load-experiment-results.md) 부하 실험 결과
 - [docs/24](docs/24-broker-reduction-design.md) 브로커 3대에서 1대로
