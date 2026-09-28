@@ -111,7 +111,7 @@ with DAG(
     check_flink_jobs = FlinkHealthOperator(
         task_id="check_flink_jobs",
         flink_base_url="http://flink-jobmanager:8081",
-        expected_jobs=5,  # 2026-09-20: CDC + Circuit + Orderbook + Binance Trade + Binance Depth (docs/31)
+        expected_jobs=4,  # 2026-09-28: CDC + Circuit + Orderbook + Binance Depth. Binance Trade 는 ClickHouse Kafka 엔진 + MV 로 옮겼다 (docs/50)
     )
 
     # ── Kafka 브로커 상태 확인 (ClickHouse 기반 간접 확인) ───
