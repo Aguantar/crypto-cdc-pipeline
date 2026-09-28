@@ -442,7 +442,9 @@ with DAG(
             since = collector_result.get("minutes_since_sample")
             if since is None or int(since) > 15:
                 unhealthy.append({"name": "Binance Collector Lag", "message": f"collector_stats_5m 표본 없음 ({since}분) - collect_metrics.sh cron 확인"})
-            elif lag_ms > 2000 or q > 500:
+            # 2026-09-28: 큐 단독 판정은 뺐다. 09-27 18:10 에 lag_p95 92ms 인데 queue 694 로 울렸다 - 초당 1,000건 구간의 순간 큐다.
+            #   09-23 사건은 lag 1,600 → 12,830ms 였고 큐는 570 → 732 였다. 뒤처짐의 신호는 lag 이고 큐는 보조다.
+            elif lag_ms > 2000 or (q > 500 and lag_ms > 500):
                 unhealthy.append({"name": "Binance Collector Lag",
                                   "message": f"lag_p95 {lag_ms}ms (> 2000) queue {q} (> 500) reconnects_15m {collector_result.get('reconnects_15m')} - 급등 구간 유실 가능 (docs/48 §7)"})
 
