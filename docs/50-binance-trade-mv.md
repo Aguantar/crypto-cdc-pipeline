@@ -66,6 +66,9 @@ WHERE symbol != '' AND trade_id > 0 AND trade_ms > 0 AND price >= 0 AND qty >= 0
 
 표 기준 정지 0초. 롤백은 MV DROP 과 잡 재제출(`flink run -d -c ...BinanceTradeJob`)이고 겹친 구간은 RMT 가 접는다. 시작 스크립트는 CDC 잡만 올리므로 재시작해도 옛 잡이 저절로 다시 뜨지 않는다.
 
+컷오버 뒤 24시간(MV 단독): 09-28 하루 42,051,802행, 중복 0, 거래소 대조 99.995%(Flink 때와 같은 수준). 파트 26,101 / 머지 5,554 (Flink 때 70,724 / 18,744).
+기준선 메모리는 median 847 MiB 로 Flink 단독 때(769)보다 **78 MiB** 높다. 병행 중 잰 +38 의 두 배이고, 대가는 이 값으로 적는다.
+
 ## 5. 남은 것
 
 - Flink 잡을 하나 빼도 TaskManager 의 1 GB 는 JVM 설정값이라 줄지 않는다. 회수는 CPU 와 운영 단순함이고, RAM 은 Flink 자체를 뺄 때만 온다.
