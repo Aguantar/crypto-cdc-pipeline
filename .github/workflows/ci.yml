@@ -46,9 +46,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: '3.10' }
-      - name: install dbt-clickhouse 1.7.2
-        # protobuf<5: dbt-core 1.7 은 protobuf 4 API(MessageToJson including_default_value_fields)를 쓴다. 운영 컨테이너와 같은 조합으로 고정
-        run: pip install "dbt-core==1.7.9" "dbt-clickhouse==1.7.2" "protobuf<5"
+      - name: install dbt-clickhouse 1.10.0
+        # 2026-10-01: 운영 컨테이너와 같은 버전(dbt-core 1.11.6 / dbt-clickhouse 1.10.0, docs/45). CI 만 1.7 에 남아
+        # 09-25 부터 엿새 동안 parse 가 빨갛게 있었다(1.10+ 의 arguments: 문법을 옛 파서가 못 읽음) - "도구는 같은 버전" 이 CI 에도 적용된다.
+        run: pip install "dbt-core==1.11.6" "dbt-clickhouse==1.10.0"
       - name: dbt parse (no warehouse connection needed)
         working-directory: dbt_cdc_pipeline
         run: dbt parse --profiles-dir . --target dev
