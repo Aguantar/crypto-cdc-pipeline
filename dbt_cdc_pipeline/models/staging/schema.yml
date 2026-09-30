@@ -99,6 +99,9 @@ models:
           - accepted_values:
               arguments:
                 values: ['ASK', 'BID']
+              config:
+                # 2026-10-01 (docs/44 §12): 뷰 전체(3.9억 행) group by 가 980 MiB 로 총량 한도에 걸렸다. 값 검증은 최근 이틀이면 충분하다
+                where: "trade_ms >= toUnixTimestamp(now() - INTERVAL 2 DAY) * 1000"
       - name: trade_ts
         description: "거래소 체결 시각(UTC)."
       - name: trade_ms
