@@ -43,6 +43,28 @@ def _send_slack_message(payload: dict[str, Any]) -> None:
         logger.error("Failed to send Slack notification: %s", e)
 
 
+def send_critical_alert(title: str, lines: list[str]) -> bool:
+    """승격 채널(Variable: slack_webhook_critical)로 보낸다. 2026-10-01 (docs/48 §7-2): 09-30 수집기 정지 때 일반 채널에
+    5번 울렸는데 아무도 안 봤다. 30분 넘게 지속되는 critical 만 휴대폰 알림을 켠 별도 채널로 한 번 더 보낸다.
+    변수가 없으면 조용히 건너뛰고 False 를 돌려준다(일반 알림은 영향 없음)."""
+    try:
+        url = Variable.get("slack_webhook_critical", default_var=None)
+    except Exception:
+        url = None
+    if not url:
+        logger.warning("slack_webhook_critical not configured - escalation skipped")
+        return False
+    payload = {"blocks": [{"type": "header", "text": {"type": "plain_text", "text": title}},
+                          {"type": "section", "text": {"type": "mrkdwn", "text": "\n".join(lines)[:2900]}}]}
+    try:
+        r = requests.post(url, data=json.dumps(payload), headers={"Content-Type": "application/json"}, timeout=10)
+        r.raise_for_status()
+        return True
+    except requests.RequestException as e:
+        logger.error("Failed to send critical Slack notification: %s", e)
+        return False
+
+
 def task_failure_callback(context: dict[str, Any]) -> None:
     """태스크 실패 시 컨텍스트 포함 Slack 알림."""
     task_instance = context.get("task_instance")

@@ -14,7 +14,7 @@ from datetime import datetime, timedelta
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 
-from callbacks.slack_callbacks import send_health_alert, task_failure_callback
+from callbacks.slack_callbacks import send_critical_alert, send_health_alert, task_failure_callback
 from operators.clickhouse_operator import ClickHouseOperator
 from operators.flink_health_operator import FlinkHealthOperator
 
@@ -45,6 +45,54 @@ INCIDENT_STAGE = {
     "Upbit Producer":           ("collect",    "cdc-upbit-producer"),
     "Binance Collector Lag":    ("collect",    "cdc-binance-collector"),
 }
+
+
+# 2026-10-01 (docs/48 §7-2): 승격. 유입이 멈추는 종류의 알림이 30분 넘게 지속되면 별도 채널(휴대폰 푸시)로 한 번 더 보내고,
+# 풀리면 해제를 보낸다. 09-30 수집기 정지 때 일반 채널에 5시간 동안 5번 울렸는데 아무도 안 봤다. 알림 문구가 아니라 경로의 문제였다.
+# 상태는 alert_events 에 남긴다(source = health_check_escalation / health_check_recovery). 같은 사건에 한 번만 승격한다.
+CRITICAL_NAMES = {"Binance Ingest", "Producer Activity", "Upbit Producer", "ClickHouse Ingest", "Kafka Health", "Kafka Connect", "Flink Jobs", "Mart Freshness"}
+ESCALATE_AFTER_MIN = 30
+
+
+def escalate_persistent(hook, unhealthy_names, log, now=None):
+    """지속 critical 을 승격 채널로, 풀린 것은 해제로. 보낸 목록을 (escalated, recovered) 로 돌려준다. 시험할 수 있게 hook 을 주입받는다."""
+    import json as _json
+    now = now or datetime.utcnow()
+    rows = hook.get_records("""
+        SELECT name, source, min(fired_at) AS first_seen, max(fired_at) AS last_seen
+        FROM cdc_pipeline.alert_events
+        WHERE fired_at >= now() - INTERVAL 6 HOUR AND source IN ('health_check', 'health_check_escalation', 'health_check_recovery')
+        GROUP BY name, source""")
+    seen = {}
+    for r in rows:
+        seen.setdefault(r["name"], {})[r["source"]] = (datetime.strptime(r["first_seen"], "%Y-%m-%d %H:%M:%S"), datetime.strptime(r["last_seen"], "%Y-%m-%d %H:%M:%S"))
+    escalated, recovered = [], []
+    for name in sorted(unhealthy_names & CRITICAL_NAMES):
+        st = seen.get(name, {})
+        if "health_check" not in st:
+            continue
+        last_rec = st.get("health_check_recovery", (None, None))[1]
+        # 이번 사건의 시작 = 마지막 해제 이후 첫 알림 (해제 뒤 재발은 새 사건)
+        first = st["health_check"][0] if last_rec is None or st["health_check"][0] > last_rec else st["health_check"][1]
+        age_min = (now - first).total_seconds() / 60
+        last_esc = st.get("health_check_escalation", (None, None))[1]
+        if age_min >= ESCALATE_AFTER_MIN and (last_esc is None or last_esc < first):
+            if send_critical_alert(f"승격: {name} {int(age_min)}분째 지속", [f"*{name}* 이(가) {int(age_min)}분째 해결되지 않았습니다.", "일반 채널의 알림을 확인하고 해당 경로(수집기·커넥터·잡)를 보세요.", f"기준: {ESCALATE_AFTER_MIN}분 넘게 지속되는 critical 만 이 채널로 옵니다."]):
+                escalated.append(name)
+    for name, st in seen.items():
+        last_esc = st.get("health_check_escalation", (None, None))[1]
+        last_rec = st.get("health_check_recovery", (None, None))[1]
+        if last_esc and (last_rec is None or last_rec < last_esc) and name not in unhealthy_names:
+            if send_critical_alert(f"해제: {name}", [f"*{name}* 이(가) 정상으로 돌아왔습니다 (승격 {last_esc.strftime('%H:%M')} UTC)."]):
+                recovered.append(name)
+    stamp = now.strftime("%Y-%m-%d %H:%M:%S")
+    out = [{"fired_at": stamp, "source": "health_check_escalation", "name": n, "severity": "critical", "message": "escalated", "dedup_key": f"{n}:esc:{stamp}"} for n in escalated] + \
+          [{"fired_at": stamp, "source": "health_check_recovery", "name": n, "severity": "info", "message": "recovered", "dedup_key": f"{n}:rec:{stamp}"} for n in recovered]
+    if out:
+        hook.execute("INSERT INTO cdc_pipeline.alert_events FORMAT JSONEachRow\n" + "\n".join(_json.dumps(r, ensure_ascii=False) for r in out))
+    if escalated or recovered:
+        log.warning("escalation sent=%s recovered=%s", escalated, recovered)
+    return escalated, recovered
 
 
 def _incident_stage(name: str):
@@ -625,6 +673,13 @@ with DAG(
                 ti.log.warning("alert_events insert failed: %s", e)
         else:
             ti.log.info("All components healthy")
+
+        # 승격·해제는 정상/비정상 양쪽에서 본다 (해제는 정상으로 돌아온 순간에 나가야 한다)
+        try:
+            from hooks.clickhouse_hook import ClickHouseHook
+            escalate_persistent(ClickHouseHook(), {u["name"] for u in unhealthy}, ti.log)
+        except Exception as e:  # noqa: BLE001
+            ti.log.warning("escalation check failed: %s", e)
 
         return {"healthy": len(unhealthy) == 0, "issues": unhealthy}
 
