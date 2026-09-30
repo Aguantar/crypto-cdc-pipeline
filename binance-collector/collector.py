@@ -23,6 +23,7 @@ QUOTE = os.getenv('QUOTE_ASSET', 'USDT')
 STREAMS_PER_CONN = int(os.getenv('STREAMS_PER_CONN', '400'))
 SYMBOL_REFRESH_SEC = float(os.getenv('SYMBOL_REFRESH_SEC', '1800'))
 RECONNECT_BEFORE_SEC = float(os.getenv('RECONNECT_BEFORE_SEC', str(23 * 3600)))
+IDLE_TIMEOUTS_BEFORE_RECONNECT = int(os.getenv('IDLE_TIMEOUTS_BEFORE_RECONNECT', '4'))   # 30초 × 4 = 2분 무프레임이면 죽은 연결로 본다
 STATS_INTERVAL = int(os.getenv('STATS_INTERVAL_SEC', '30'))
 SYMBOLS_ENV = os.getenv('SYMBOLS', '')
 MODE = os.getenv('MODE', 'trade')                                   # trade | depth (docs/31 §3-3)
@@ -102,11 +103,20 @@ class Conn:
             try:
                 async with websockets.connect(url, ping_interval=None, max_size=2 ** 22) as ws:
                     log.info(f"conn#{self.idx} open: {len(self.symbols)} streams"); backoff = 1
+                    idle_timeouts = 0
                     while not self.stop.is_set() and not self.resubscribe.is_set() and time.time() - opened < RECONNECT_BEFORE_SEC:
                         try:
                             raw = await asyncio.wait_for(ws.recv(), timeout=30)
                         except asyncio.TimeoutError:
+                            # 2026-10-01 (docs/44 §12): 30초 무프레임을 그냥 넘겼더니 반쯤 죽은 연결(서버 ping 도 데이터도 안 오는데
+                            # 소켓은 열린 상태)을 5시간 14분 동안 못 알아챘다(09-30 06:57~12:11 UTC, 체결 유실). conns=2 라고 찍히고
+                            # reconnects 도 안 늘었다. 심볼 400개 묶음이 2분 넘게 조용할 일은 없다 → 끊고 다시 잇는다.
+                            idle_timeouts += 1
+                            if idle_timeouts >= IDLE_TIMEOUTS_BEFORE_RECONNECT:
+                                log.warning(f"conn#{self.idx} no frame for {30 * idle_timeouts}s - treating connection as dead, reconnecting")
+                                break
                             continue
+                        idle_timeouts = 0
                         recv_ms = int(time.time() * 1000)
                         try:
                             m = json.loads(raw); d = m['data']
