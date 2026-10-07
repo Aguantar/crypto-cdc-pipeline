@@ -36,6 +36,8 @@ INCIDENT_STAGE = {
     "ClickHouse Ingest":        ("clickhouse", "cdc_pipeline.crypto_trades"),
     "Ledger Reconcile Stale":   ("orchestration", "virtual-trader"),
     "Mart Freshness":           ("orchestration", "dbt"),
+    "Backup Freshness":         ("backup",     "oracle:/mnt/backup"),
+    "Backup Volume":            ("backup",     "oracle:/mnt/backup"),
     # 2026-09-24 (docs/44 §6): 아래 5개는 이름이 있는데 매핑이 없어 09-20~24 사건 53건 중 46건이 unknown 으로 쌓였다.
     #   접두사 매칭은 키가 이름보다 짧을 때만 돕는다 ("Ledger Reconcile" 은 "Ledger Reconcile Stale" 에 안 걸린다).
     "Ledger Reconcile":         ("collect",    "virtual-trader"),
@@ -50,7 +52,8 @@ INCIDENT_STAGE = {
 # 2026-10-01 (docs/48 §7-2): 승격. 유입이 멈추는 종류의 알림이 30분 넘게 지속되면 별도 채널(휴대폰 푸시)로 한 번 더 보내고,
 # 풀리면 해제를 보낸다. 09-30 수집기 정지 때 일반 채널에 5시간 동안 5번 울렸는데 아무도 안 봤다. 알림 문구가 아니라 경로의 문제였다.
 # 상태는 alert_events 에 남긴다(source = health_check_escalation / health_check_recovery). 같은 사건에 한 번만 승격한다.
-CRITICAL_NAMES = {"Binance Ingest", "Producer Activity", "Upbit Producer", "ClickHouse Ingest", "Kafka Health", "Kafka Connect", "Flink Jobs", "Mart Freshness"}
+CRITICAL_NAMES = {"Binance Ingest", "Producer Activity", "Upbit Producer", "ClickHouse Ingest", "Kafka Health", "Kafka Connect", "Flink Jobs", "Mart Freshness",
+                  "Backup Freshness"}   # 2026-10-07 (docs/51): 오프사이트 사본이 이틀 넘게 안 오면 유일한 복구 수단이 멈춘 것
 ESCALATE_AFTER_MIN = 30
 
 
@@ -414,6 +417,40 @@ with DAG(
         result_type="first",
     )
 
+    # ── 오프사이트 백업 도착·용량 (2026-10-07, docs/51) ─────────
+    # 10-01 ~ 10-07 Oracle 볼륨이 100% 라 백업이 7일간 안 갔는데 어디서도 안 울렸다. 백업 DAG 의 rsync 는 `| tail` 뒤라 success 였고,
+    # 검증 태스크는 다른 실패에 가려 안 돌았다. 그래서 백업 DAG 과 무관한 자리에서 "원격에 마지막으로 도착한 백업이 언제인가" 와
+    # "원격 볼륨이 얼마나 찼나" 를 직접 묻는다. 접속 자체가 안 되면 그것도 unhealthy 다 - 확인 못 한 것을 정상으로 치지 않는다.
+    def _check_backup_freshness(**context) -> dict:
+        import re
+        import subprocess
+        ssh = ["ssh", "-i", "/opt/airflow/secrets/oci_key", "-o", "UserKnownHostsFile=/opt/airflow/secrets/known_hosts",
+               "-o", "StrictHostKeyChecking=yes", "-o", "ConnectTimeout=15", "ubuntu@10.88.0.1",
+               "cd /mnt/backup/clickhouse && ls -1d full_* incr_* 2>/dev/null | sort | tail -1; "
+               "ls -1 parquet 2>/dev/null | sort | tail -1; df --output=pcent /mnt/backup | tail -1"]
+        try:
+            out = subprocess.run(ssh, capture_output=True, text=True, timeout=40)
+        except subprocess.TimeoutExpired:
+            return {"ok": False, "error": "ssh timeout"}
+        if out.returncode != 0:
+            return {"ok": False, "error": (out.stderr or out.stdout).strip()[:200]}
+        lines = [l.strip() for l in out.stdout.splitlines() if l.strip()]
+        latest = next((l for l in lines if l.startswith(("full_", "incr_"))), "")
+        parquet = next((l for l in lines if l.startswith("orderbook_raw_")), "")
+        pct = next((int(m.group(1)) for l in lines for m in [re.search(r"(\d+)%", l)] if m), None)
+        today = datetime.utcnow().date()
+        bk_days = (today - datetime.strptime(latest[5:13], "%Y%m%d").date()).days if latest else None
+        pq_days = (today - datetime.strptime(parquet[14:24], "%Y-%m-%d").date()).days if parquet else None
+        result = {"ok": True, "latest_backup": latest, "backup_age_days": bk_days, "latest_parquet": parquet, "parquet_age_days": pq_days, "remote_used_pct": pct}
+        context["ti"].log.info("backup freshness: %s", result)
+        return result
+
+    check_backup_freshness = PythonOperator(
+        task_id="check_backup_freshness",
+        python_callable=_check_backup_freshness,
+        execution_timeout=timedelta(minutes=2),
+    )
+
     # ── Binance 체결 적재 (2026-09-20, docs/31): 수집기·잡 어느 쪽이 멈춰도 60초 0행으로 드러난다. 24h 평균 361/s 라 60초 0 은 확실한 이상
     check_binance_ingest = ClickHouseOperator(
         task_id="check_binance_ingest",
@@ -473,8 +510,21 @@ with DAG(
         binance_result = ti.xcom_pull(task_ids="check_binance_ingest")
         collector_result = ti.xcom_pull(task_ids="check_collector_lag")
         fresh_result = ti.xcom_pull(task_ids="check_mart_freshness")
+        backup_result = ti.xcom_pull(task_ids="check_backup_freshness")
 
         unhealthy = []
+
+        # 오프사이트 백업 (docs/51): 백업은 01:20 UTC 에 전날을 보낸다. 정상이면 원격 최신 태그는 오늘 또는 어제. 2일 넘으면 안 간 것.
+        # Parquet 은 데이터 날짜(전날)라 정상 최대 2일. 볼륨 85% 는 "다음 전체 백업(16GB)이 들어갈 자리가 없어지기 전" 이다.
+        if backup_result is not None:
+            if not backup_result.get("ok"):
+                unhealthy.append({"name": "Backup Freshness", "message": f"원격 확인 실패: {backup_result.get('error')} - 확인 못 한 백업은 없는 백업"})
+            else:
+                bk, pq, pct = backup_result.get("backup_age_days"), backup_result.get("parquet_age_days"), backup_result.get("remote_used_pct")
+                if bk is None or bk > 2 or pq is None or pq > 2:
+                    unhealthy.append({"name": "Backup Freshness", "message": f"원격 최신 백업 {backup_result.get('latest_backup') or '없음'} ({bk}일 전), Parquet {backup_result.get('latest_parquet') or '없음'} ({pq}일 전) - backup_daily 의 sync·verify 로그 확인"})
+                if pct is not None and pct >= 85:
+                    unhealthy.append({"name": "Backup Volume", "message": f"Oracle /mnt/backup {pct}% (>= 85) - 다음 전체 백업 16GB 가 안 들어간다. 보존 정책(docs/51) 재산정"})
 
         # 파생 표 신선도: 어느 하나라도 2일 넘게 안 갱신되면 dbt 가 멈춘 것이다
         if fresh_result:
@@ -704,6 +754,7 @@ with DAG(
             check_binance_ingest,
             check_mart_freshness,
             check_collector_lag,
+            check_backup_freshness,
         ]
         >> evaluate_health
     )

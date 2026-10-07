@@ -1,15 +1,23 @@
 """DAG 4: backup_daily - ClickHouse 증분 백업 + 호가 원본 Parquet 롤링 + Oracle 오프사이트 동기화 (일 1회).
 
 무엇을 (docs/21 §1·§4):
-  1. ClickHouse 네이티브 백업. 매월 1일은 전체, 나머지는 최신 전체를 base 로 한 증분. 대상 = cdc_pipeline 전체 − BACKUP_EXCLUDE(호가 원본은 Parquet 으로 따로, 전환 롤백본은 중복).
-  2. orderbook_raw 의 전날(UTC) 파티션을 Parquet(zstd) 로 내보내 120일 롤링. 원본은 7일 TTL 로 지워지므로 이것이 유일한 장기 보존본.
-  3. rsync 로 Oracle /mnt/backup 에 동기화하고, 원격 보존 정책(Parquet 120일, 백업 전체 3세대)을 적용한 뒤, dry-run rsync 로 "전송할 것 0" 을 확인한다.
+  1. ClickHouse 네이티브 백업. 최신 전체가 7일 넘게 오래됐으면 전체, 아니면 최신 전체를 base 로 한 증분. 대상 = cdc_pipeline 전체 − BACKUP_EXCLUDE.
+  2. orderbook_raw 의 전날(UTC) 파티션을 Parquet(zstd) 로 내보내 75일 롤링. 원본은 7일 TTL 로 지워지므로 이것이 유일한 장기 보존본.
+  3. rsync 로 Oracle /mnt/backup 에 동기화하고, 원격 보존 정책(Parquet 75일, 전체 2세대, 증분은 최신 전체 이후 3일)을 적용하고,
+     dry-run rsync 로 "전송할 것 0" 을 확인한 뒤, 마지막에 로컬 스테이징을 정리한다.
 왜 이렇게:
   - 백업은 다른 호스트·다른 디스크에 있어야 백업이다. 미니PC 로컬 사본은 스테이징이고 며칠만 둔다.
   - 전송을 Airflow 에서 하는 이유: 실패가 DAG 실패로 보이고 재시도·알림이 같은 자리에서 된다. 호스트 cron 은 조용히 실패한다.
   - Airflow 컨테이너가 ClickHouse(uid 101) 가 만든 750 디렉터리를 읽어야 해서 보조 그룹 101 로 실행한다(compose group_add). ssh 키는 저장소 밖 사본(uid 50000, 600).
   - 검증은 "전송했다"가 아니라 "원격이 로컬과 같다"(rsync -n 결과 0건)로 한다. 백업이 있다는 말은 리허설(docs/21) 뒤에만 한다 - 복구 리허설은 분기마다 수동.
-  - Parquet 은 zstd: 같은 하루(19.7M행)가 lz4 977MB → zstd 726MB (docs/21 실측). 120일 ≈ 87GB + 백업 ≈ 20GB < 147GB. 6개월(180일)은 안 들어간다.
+  - Parquet 은 zstd: 같은 하루(19.7M행)가 lz4 977MB → zstd 726MB (docs/21 실측).
+  - 2026-10-07 (docs/51) 용량 재산정. 09-17 의 "증분 80MB/일" 은 base 직후 하루치였고, 머지가 파트를 다시 쓰므로 증분은 매일 커져
+    보름이면 전체 크기(16GB)가 됐다. 월 1회 전체 + 전체 3세대 보존 = 3개월치 증분을 다 들고 있는 설계였고 원격 147GB 가 10-01 에 찼다.
+    새 산정(실측 기준): 전체 16GB × 2세대 32 + 증분(최신 전체 이후 3일, 하루 약 +1GB 로 커져 최대 5+6+7) 18 + Parquet 0.8GB × 75일 60
+    = 약 110GB = 75%. 헬스체크가 85% 에서 울린다. 증분을 전체 기준으로 두는 이유: 체인(전날 기준)은 하나라도 깨지면 그 뒤를 전부 못 쓴다.
+  - 2026-10-07 (docs/51) 실패가 조용했던 이유 둘을 고쳤다. `rsync … | tail` 은 tail 의 종료 코드를 돌려줘 "No space left" 가 6일간
+    success 로 찍혔다 → 모든 bash 태스크에 `set -euo pipefail`. 검증(verify)이 prune 뒤에 있어 prune 이 권한으로 죽자 검증이 한 번도
+    안 돌았다 → 검증을 prune 앞으로. 정리는 검증 결과를 바꾸지 않으므로 마지막이어야 한다.
   - 백업 이름은 실행일(data_interval_end), Parquet 이름은 데이터 날짜(ds). 백업은 '그 시점의 상태'이고 Parquet 은 '그 날의 데이터'라서.
   - 대상일 = {{ ds }} (전날). 스케줄 01:20 UTC: 전날 UTC 파티션이 닫힌 뒤이고 06:35 대조·16:00 daily_pipeline 과 겹치지 않는다.
 """
@@ -42,10 +50,12 @@ BACKUP_ROOT = "/backups"                     # 호스트 ~/clickhouse-backups (c
 REMOTE = "ubuntu@10.88.0.1"                  # Oracle, WireGuard 터널
 REMOTE_ROOT = "/mnt/backup"
 SSH = "ssh -i /opt/airflow/secrets/oci_key -o UserKnownHostsFile=/opt/airflow/secrets/known_hosts -o StrictHostKeyChecking=yes -o ConnectTimeout=15"
-PARQUET_KEEP_DAYS_REMOTE = 120               # 실측 하루 ~0.7GB(zstd) × 120 ≈ 85GB + 백업 ≈ 20GB < 147GB
+PARQUET_KEEP_DAYS_REMOTE = 75                # 2026-10-07 (docs/51): 120 → 75. 실측 0.62~1.0GB/일, 75일 ≈ 60GB. 머리 주석의 산정 참고
 PARQUET_KEEP_DAYS_LOCAL = 3
-INCR_KEEP_DAYS_LOCAL = 14
-FULL_KEEP_REMOTE = 3
+INCR_KEEP_DAYS_LOCAL = 3                     # 2026-10-07: 14 → 3. 증분이 매일 커지므로(docs/51) 로컬 스테이징도 짧게
+INCR_KEEP_DAYS_REMOTE = 3                    # 최신 전체 이후 것만, 그중 최근 3일
+FULL_KEEP_REMOTE = 2                         # 2026-10-07: 3 → 2. 주 1회 전체이므로 2세대 = 약 2주
+FULL_EVERY_DAYS = 7                          # 2026-10-07: 월 1회 → 7일마다. 최신 전체가 이보다 오래되면 전체
 
 
 def _ch_exec(sql: str, **params) -> str:
@@ -76,7 +86,9 @@ def _clickhouse_backup(**context) -> dict:
     run_day = context["data_interval_end"]          # 실행일 = 백업 시점
     tag = run_day.strftime("%Y%m%d")
     base = _latest_full()
-    if run_day.day == 1 or base is None:
+    base_age_days = (run_day.date() - datetime.strptime(base[5:], "%Y%m%d").date()).days if base else None
+    # 2026-10-07 (docs/51): 달력(매월 1일)이 아니라 최신 전체의 나이로 정한다. 하루 실패해도 다음 날 전체가 만들어진다.
+    if base is None or base_age_days >= FULL_EVERY_DAYS:
         name = f"full_{tag}"
         sql = f"BACKUP DATABASE cdc_pipeline EXCEPT TABLES {_except()} TO File('{BACKUP_ROOT}/{name}')"
     else:
@@ -155,30 +167,34 @@ with DAG(
         task_id="sync_to_oracle",
         sla=timedelta(hours=2),   # 2026-09-20 (docs/39 §2 ⑤): 백업이 늦으면 다음 백업 창과 겹친다,
         bash_command=(
-            f'rsync -a --partial --chmod=ugo+rX --info=stats1 -e "{SSH}" {BACKUP_ROOT}/ {REMOTE}:{REMOTE_ROOT}/clickhouse/ 2>&1 | tail -6'
+            f'set -euo pipefail; rsync -a --partial --chmod=ugo+rX --info=stats1 -e "{SSH}" {BACKUP_ROOT}/ {REMOTE}:{REMOTE_ROOT}/clickhouse/ 2>&1 | tail -6'
         ),
         execution_timeout=timedelta(minutes=60),
     )
 
-    # 원격 보존: Parquet 120일, 전체 백업 최근 3세대(+그에 딸린 증분), 그 이전 증분 삭제
+    # 원격 보존: Parquet 75일, 전체 최근 2세대, 증분은 최신 전체 이후 것 중 최근 3일만. 마지막 줄의 df 는 로그용이고 판정은 health_check 가 한다.
     apply_remote_retention = BashOperator(
         task_id="apply_remote_retention",
         bash_command=(
-            f'{SSH} {REMOTE} \'set -e; cd {REMOTE_ROOT}/clickhouse; '
+            f'set -euo pipefail; {SSH} {REMOTE} \'set -e; cd {REMOTE_ROOT}/clickhouse; '
             f'find parquet -name "orderbook_raw_*.parquet" -mtime +{PARQUET_KEEP_DAYS_REMOTE} -print -delete | sed "s/^/pruned parquet: /"; '
             f'fulls=$(ls -d full_* 2>/dev/null | sort); keep=$(echo "$fulls" | tail -n {FULL_KEEP_REMOTE}); '
             f'for d in $fulls; do echo "$keep" | grep -qx "$d" || {{ echo "pruned full: $d"; rm -rf "$d"; }}; done; '
-            f'oldest=$(echo "$keep" | head -n 1 | sed "s/full_//"); '
-            f'for d in $(ls -d incr_* 2>/dev/null); do t=${{d#incr_}}; [ "$t" -lt "$oldest" ] && {{ echo "pruned incr: $d"; rm -rf "$d"; }}; done; '
+            f'latest=$(echo "$keep" | tail -n 1 | sed "s/full_//"); '
+            f'for d in $(ls -d incr_* 2>/dev/null); do t=${{d#incr_}}; [ "$t" -lt "$latest" ] && {{ echo "pruned incr (older than latest full): $d"; rm -rf "$d"; }}; done; '
+            f'for d in $(ls -d incr_* 2>/dev/null | sort | head -n -{INCR_KEEP_DAYS_REMOTE}); do echo "pruned incr (keep {INCR_KEEP_DAYS_REMOTE}): $d"; rm -rf "$d"; done; '
             f'df -h {REMOTE_ROOT} | tail -1; du -sh {REMOTE_ROOT}/clickhouse\''
         ),
     )
 
-    # 로컬(스테이징) 보존: Parquet 3일, 증분 14일, 전체는 최신 1개만 (base 로 필요)
+    # 로컬(스테이징) 보존: Parquet 3일, 증분 3일, 전체는 최신 1개만 (base 로 필요).
+    # ClickHouse(uid 101)가 750 으로 만드는 디렉터리를 Airflow(50000, 보조그룹 101)가 지우려면 그룹 쓰기가 필요하다.
+    # 2026-10-07 (docs/51): 이 권한이 없어 prune 이 한 번도 성공한 적이 없었다. 호스트 cron 01:30 UTC 가 ClickHouse 컨테이너 root 로
+    # `chmod -R g+w /backups` 를 한다(땜질. 맞는 방향은 ClickHouse 가 오브젝트 스토리지로 직접 백업하고 수명주기 정책이 지우는 것).
     prune_local = BashOperator(
         task_id="prune_local",
         bash_command=(
-            f'set -e; cd {BACKUP_ROOT}; '
+            f'set -euo pipefail; cd {BACKUP_ROOT}; '
             f'find parquet -name "orderbook_raw_*.parquet" -mtime +{PARQUET_KEEP_DAYS_LOCAL} -print -delete | sed "s/^/pruned local parquet: /"; '
             f'find . -maxdepth 1 -name "incr_*" -type d -mtime +{INCR_KEEP_DAYS_LOCAL} -print -exec rm -rf {{}} + | sed "s/^/pruned local incr: /"; '
             f'fulls=$(ls -d full_* | sort); for d in $(echo "$fulls" | head -n -1); do echo "pruned local full: $d"; rm -rf "$d"; done; '
@@ -190,9 +206,10 @@ with DAG(
     verify_remote = BashOperator(
         task_id="verify_remote_in_sync",
         bash_command=(
-            f'pending=$(rsync -a -n -i --chmod=ugo+rX -e "{SSH}" {BACKUP_ROOT}/ {REMOTE}:{REMOTE_ROOT}/clickhouse/ | grep -c "^<f" || true); '
+            f'set -euo pipefail; pending=$(rsync -a -n -i --chmod=ugo+rX -e "{SSH}" {BACKUP_ROOT}/ {REMOTE}:{REMOTE_ROOT}/clickhouse/ | grep -c "^<f" || true); '
             f'echo "pending files: $pending"; [ "$pending" -eq 0 ]'
         ),
     )
 
-    [clickhouse_backup, export_parquet] >> sync_to_oracle >> apply_remote_retention >> prune_local >> verify_remote
+    # 2026-10-07 (docs/51): verify 가 prune 앞. 정리가 죽어도 검증은 돌아야 한다
+    [clickhouse_backup, export_parquet] >> sync_to_oracle >> apply_remote_retention >> verify_remote >> prune_local

@@ -64,6 +64,7 @@ def test_health_check_dag_structure(dag_bag):
         "check_binance_ingest",   # 2026-09-20 Binance 체결 (docs/31)
         "check_mart_freshness",   # 2026-09-24 파생 표 신선도 (docs/44)
         "check_collector_lag",    # 2026-09-25 수집기 뒤처짐 (docs/48 §7)
+        "check_backup_freshness", # 2026-10-07 오프사이트 백업 도착·용량 (docs/51)
         "evaluate_health",
     }
     actual_tasks = {t.task_id for t in dag.tasks}
@@ -89,6 +90,7 @@ def test_health_check_dag_structure(dag_bag):
         "check_binance_ingest",   # 2026-09-20 Binance 체결 (docs/31)
         "check_mart_freshness",   # 2026-09-24 파생 표 신선도 (docs/44)
         "check_collector_lag",    # 2026-09-25 수집기 뒤처짐 (docs/48 §7)
+        "check_backup_freshness", # 2026-10-07 (docs/51)
     }
     # 커버리지 체크는 업비트 REST 풀로 직렬화되어야 한다 (한도 10/s, DAG 간 충돌 방지)
     assert dag.get_task("check_market_coverage").pool == "upbit_rest"
@@ -185,13 +187,17 @@ def test_reconcile_trades_dag_structure(dag_bag):
 
 
 def test_backup_daily_dag_structure(dag_bag):
-    """backup_daily: 백업·Parquet 병렬 → 전송 → 원격 보존 → 로컬 보존 → 검증 순서."""
+    """backup_daily: 백업·Parquet 병렬 → 전송 → 원격 보존 → 검증 → 로컬 보존. 2026-10-07 (docs/51): 검증이 정리 앞이어야 정리 실패가 검증을 가리지 않는다."""
     dag = dag_bag.get_dag("backup_daily")
     assert dag is not None
     assert {t.task_id for t in dag.tasks} == {"clickhouse_backup", "export_orderbook_parquet", "sync_to_oracle",
                                               "apply_remote_retention", "prune_local", "verify_remote_in_sync"}
     assert {t.task_id for t in dag.get_task("sync_to_oracle").upstream_list} == {"clickhouse_backup", "export_orderbook_parquet"}
-    assert {t.task_id for t in dag.get_task("verify_remote_in_sync").upstream_list} == {"prune_local"}
+    assert {t.task_id for t in dag.get_task("verify_remote_in_sync").upstream_list} == {"apply_remote_retention"}
+    assert {t.task_id for t in dag.get_task("prune_local").upstream_list} == {"verify_remote_in_sync"}
+    # docs/51: 파이프 뒤의 명령이 종료 코드를 정한다. 셸 태스크는 전부 pipefail 로 시작해야 한다
+    for tid in ("sync_to_oracle", "apply_remote_retention", "verify_remote_in_sync", "prune_local"):
+        assert dag.get_task(tid).bash_command.startswith("set -euo pipefail"), tid
 
 
 def test_cases_hourly_dag_structure(dag_bag):
