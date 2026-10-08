@@ -4,7 +4,7 @@
   1. ClickHouse 네이티브 백업. 최신 전체가 7일 넘게 오래됐으면 전체, 아니면 최신 전체를 base 로 한 증분. 대상 = cdc_pipeline 전체 − BACKUP_EXCLUDE.
   2. orderbook_raw 의 전날(UTC) 파티션을 Parquet(zstd) 로 내보내 75일 롤링. 원본은 7일 TTL 로 지워지므로 이것이 유일한 장기 보존본.
   3. rsync 로 Oracle /mnt/backup 에 동기화하고, 원격 보존 정책(Parquet 75일, 전체 2세대, 증분은 최신 전체 이후 3일)을 적용하고,
-     dry-run rsync 로 "전송할 것 0" 을 확인한 뒤, 마지막에 로컬 스테이징을 정리한다.
+     로컬 스테이징을 원격과 같은 규칙으로 정리한 뒤, dry-run rsync 로 "전송할 것 0" 을 확인한다(검증은 정리가 실패해도 돈다).
 왜 이렇게:
   - 백업은 다른 호스트·다른 디스크에 있어야 백업이다. 미니PC 로컬 사본은 스테이징이고 며칠만 둔다.
   - 전송을 Airflow 에서 하는 이유: 실패가 DAG 실패로 보이고 재시도·알림이 같은 자리에서 된다. 호스트 cron 은 조용히 실패한다.
@@ -17,7 +17,9 @@
     = 약 110GB = 75%. 헬스체크가 85% 에서 울린다. 증분을 전체 기준으로 두는 이유: 체인(전날 기준)은 하나라도 깨지면 그 뒤를 전부 못 쓴다.
   - 2026-10-07 (docs/51) 실패가 조용했던 이유 둘을 고쳤다. `rsync … | tail` 은 tail 의 종료 코드를 돌려줘 "No space left" 가 6일간
     success 로 찍혔다 → 모든 bash 태스크에 `set -euo pipefail`. 검증(verify)이 prune 뒤에 있어 prune 이 권한으로 죽자 검증이 한 번도
-    안 돌았다 → 검증을 prune 앞으로. 정리는 검증 결과를 바꾸지 않으므로 마지막이어야 한다.
+    안 돌았다 → 검증은 prune 의 성공 여부와 무관하게 돈다(trigger_rule all_done).
+  - 2026-10-08 (docs/51 §8) 첫 실행에서 검증이 15,400 파일로 실패했다. 원격 보존이 지운 옛 증분을 로컬이 아직 들고 있어서다. 검증의 뜻이
+    "원격 ⊇ 로컬" 이므로 로컬 정리가 원격과 같은 규칙으로 검증보다 먼저 돌아야 한다. 정리가 실패하면 검증도 실패하는데, 그건 맞는 신호다.
   - 백업 이름은 실행일(data_interval_end), Parquet 이름은 데이터 날짜(ds). 백업은 '그 시점의 상태'이고 Parquet 은 '그 날의 데이터'라서.
   - 대상일 = {{ ds }} (전날). 스케줄 01:20 UTC: 전날 UTC 파티션이 닫힌 뒤이고 06:35 대조·16:00 daily_pipeline 과 겹치지 않는다.
 """
@@ -50,9 +52,11 @@ BACKUP_ROOT = "/backups"                     # 호스트 ~/clickhouse-backups (c
 REMOTE = "ubuntu@10.88.0.1"                  # Oracle, WireGuard 터널
 REMOTE_ROOT = "/mnt/backup"
 SSH = "ssh -i /opt/airflow/secrets/oci_key -o UserKnownHostsFile=/opt/airflow/secrets/known_hosts -o StrictHostKeyChecking=yes -o ConnectTimeout=15"
-PARQUET_KEEP_DAYS_REMOTE = 75                # 2026-10-07 (docs/51): 120 → 75. 실측 0.62~1.0GB/일, 75일 ≈ 60GB. 머리 주석의 산정 참고
+PARQUET_KEEP_DAYS_REMOTE = 60                # 2026-10-08 (docs/51 §8): 75 → 60. 전체 백업이 10-08 에 20.4GB 였고 Binance 30일 TTL 이 차면 약 24GB.
+                                             #   2세대 48 + 증분 3일 7 + Parquet 0.85GB × 60일 51 = 106GB = 72%. 75일이면 81% 로 알림선(85%)에 붙는다
 PARQUET_KEEP_DAYS_LOCAL = 3
-INCR_KEEP_DAYS_LOCAL = 3                     # 2026-10-07: 14 → 3. 증분이 매일 커지므로(docs/51) 로컬 스테이징도 짧게
+INCR_KEEP_LOCAL = 3                          # 2026-10-08: 로컬 증분 규칙을 원격과 같게(최신 전체 이후 것 중 최근 3개). 10-07 의 mtime 3일 규칙은
+                                             #   원격 보존이 지운 증분을 로컬이 들고 있게 해 전체 백업 날마다 검증(원격 ⊇ 로컬)을 깨뜨렸다 (docs/51 §8)
 INCR_KEEP_DAYS_REMOTE = 3                    # 최신 전체 이후 것만, 그중 최근 3일
 FULL_KEEP_REMOTE = 2                         # 2026-10-07: 3 → 2. 주 1회 전체이므로 2세대 = 약 2주
 FULL_EVERY_DAYS = 7                          # 2026-10-07: 월 1회 → 7일마다. 최신 전체가 이보다 오래되면 전체
@@ -196,8 +200,10 @@ with DAG(
         bash_command=(
             f'set -euo pipefail; cd {BACKUP_ROOT}; '
             f'find parquet -name "orderbook_raw_*.parquet" -mtime +{PARQUET_KEEP_DAYS_LOCAL} -print -delete | sed "s/^/pruned local parquet: /"; '
-            f'find . -maxdepth 1 -name "incr_*" -type d -mtime +{INCR_KEEP_DAYS_LOCAL} -print -exec rm -rf {{}} + | sed "s/^/pruned local incr: /"; '
             f'fulls=$(ls -d full_* | sort); for d in $(echo "$fulls" | head -n -1); do echo "pruned local full: $d"; rm -rf "$d"; done; '
+            f'latest=$(echo "$fulls" | tail -n 1 | sed "s/full_//"); '
+            f'for d in $(ls -d incr_* 2>/dev/null); do t=${{d#incr_}}; [ "$t" -lt "$latest" ] && {{ echo "pruned local incr (older than latest full): $d"; rm -rf "$d"; }}; done; '
+            f'for d in $(ls -d incr_* 2>/dev/null | sort | head -n -{INCR_KEEP_LOCAL}); do echo "pruned local incr (keep {INCR_KEEP_LOCAL}): $d"; rm -rf "$d"; done; '
             f'du -sh {BACKUP_ROOT}'
         ),
     )
@@ -205,11 +211,12 @@ with DAG(
     # 검증: 원격이 로컬 스테이징을 전부 갖고 있는가 (dry-run 에서 전송 대상 0). 로컬 보존이 더 짧으니 원격 ⊇ 로컬 이어야 한다.
     verify_remote = BashOperator(
         task_id="verify_remote_in_sync",
+        trigger_rule="all_done",   # 2026-10-08: prune 이 죽어도 검증은 돈다 (docs/51 2-4 의 재발 방지)
         bash_command=(
             f'set -euo pipefail; pending=$(rsync -a -n -i --chmod=ugo+rX -e "{SSH}" {BACKUP_ROOT}/ {REMOTE}:{REMOTE_ROOT}/clickhouse/ | grep -c "^<f" || true); '
             f'echo "pending files: $pending"; [ "$pending" -eq 0 ]'
         ),
     )
 
-    # 2026-10-07 (docs/51): verify 가 prune 앞. 정리가 죽어도 검증은 돌아야 한다
-    [clickhouse_backup, export_parquet] >> sync_to_oracle >> apply_remote_retention >> verify_remote >> prune_local
+    # 2026-10-08 (docs/51 §8): 로컬 정리(원격과 같은 규칙) → 검증. 검증은 all_done 이라 정리가 죽어도 돈다
+    [clickhouse_backup, export_parquet] >> sync_to_oracle >> apply_remote_retention >> prune_local >> verify_remote

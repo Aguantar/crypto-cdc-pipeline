@@ -187,14 +187,16 @@ def test_reconcile_trades_dag_structure(dag_bag):
 
 
 def test_backup_daily_dag_structure(dag_bag):
-    """backup_daily: 백업·Parquet 병렬 → 전송 → 원격 보존 → 검증 → 로컬 보존. 2026-10-07 (docs/51): 검증이 정리 앞이어야 정리 실패가 검증을 가리지 않는다."""
+    """backup_daily: 백업·Parquet 병렬 → 전송 → 원격 보존 → 로컬 보존(원격과 같은 규칙) → 검증(all_done). 2026-10-08 (docs/51 §8)."""
     dag = dag_bag.get_dag("backup_daily")
     assert dag is not None
     assert {t.task_id for t in dag.tasks} == {"clickhouse_backup", "export_orderbook_parquet", "sync_to_oracle",
                                               "apply_remote_retention", "prune_local", "verify_remote_in_sync"}
     assert {t.task_id for t in dag.get_task("sync_to_oracle").upstream_list} == {"clickhouse_backup", "export_orderbook_parquet"}
-    assert {t.task_id for t in dag.get_task("verify_remote_in_sync").upstream_list} == {"apply_remote_retention"}
-    assert {t.task_id for t in dag.get_task("prune_local").upstream_list} == {"verify_remote_in_sync"}
+    assert {t.task_id for t in dag.get_task("prune_local").upstream_list} == {"apply_remote_retention"}
+    assert {t.task_id for t in dag.get_task("verify_remote_in_sync").upstream_list} == {"prune_local"}
+    # docs/51 §8: 정리가 죽어도 검증은 돌아야 한다
+    assert dag.get_task("verify_remote_in_sync").trigger_rule == "all_done"
     # docs/51: 파이프 뒤의 명령이 종료 코드를 정한다. 셸 태스크는 전부 pipefail 로 시작해야 한다
     for tid in ("sync_to_oracle", "apply_remote_retention", "verify_remote_in_sync", "prune_local"):
         assert dag.get_task(tid).bash_command.startswith("set -euo pipefail"), tid
