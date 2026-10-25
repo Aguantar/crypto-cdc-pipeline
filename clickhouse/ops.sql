@@ -41,3 +41,12 @@ CREATE TABLE IF NOT EXISTS cdc_pipeline.collector_stats_5m
     lag_p50_ms UInt32, lag_p95_ms UInt32
 )
 ENGINE = MergeTree ORDER BY (collector, ts) TTL ts + INTERVAL 90 DAY;
+
+-- 2026-10-23 (docs/54): 컨슈머 그룹 랙. 끝단 지연(e2e)은 "늦다" 만 말하고 어느 컨슈머가 어느 파티션에서 밀리는지는 말하지 않는다.
+-- collect_metrics.sh 가 5분마다 kafka-consumer-groups --describe --all-groups 를 한 번 돌려 파티션 단위로 남긴다. health_check check_consumer_lag 가 본다.
+CREATE TABLE IF NOT EXISTS cdc_pipeline.consumer_lag_5m
+(
+    ts DateTime, consumer_group LowCardinality(String), topic LowCardinality(String), partition UInt16,
+    current_offset Int64, end_offset Int64, lag Int64
+)
+ENGINE = MergeTree ORDER BY (consumer_group, topic, partition, ts) TTL ts + INTERVAL 90 DAY;

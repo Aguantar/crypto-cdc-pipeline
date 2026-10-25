@@ -37,6 +37,7 @@ INCIDENT_STAGE = {
     "Ledger Reconcile Stale":   ("orchestration", "virtual-trader"),
     "Mart Freshness":           ("orchestration", "dbt"),
     "Backup Freshness":         ("backup",     "oracle:/mnt/backup"),
+    "Consumer Lag":             ("kafka",      "consumer-group"),
     "Backup Volume":            ("backup",     "oracle:/mnt/backup"),
     # 2026-09-24 (docs/44 §6): 아래 5개는 이름이 있는데 매핑이 없어 09-20~24 사건 53건 중 46건이 unknown 으로 쌓였다.
     #   접두사 매칭은 키가 이름보다 짧을 때만 돕는다 ("Ledger Reconcile" 은 "Ledger Reconcile Stale" 에 안 걸린다).
@@ -53,7 +54,8 @@ INCIDENT_STAGE = {
 # 풀리면 해제를 보낸다. 09-30 수집기 정지 때 일반 채널에 5시간 동안 5번 울렸는데 아무도 안 봤다. 알림 문구가 아니라 경로의 문제였다.
 # 상태는 alert_events 에 남긴다(source = health_check_escalation / health_check_recovery). 같은 사건에 한 번만 승격한다.
 CRITICAL_NAMES = {"Binance Ingest", "Producer Activity", "Upbit Producer", "ClickHouse Ingest", "Kafka Health", "Kafka Connect", "Flink Jobs", "Mart Freshness",
-                  "Backup Freshness"}   # 2026-10-07 (docs/51): 오프사이트 사본이 이틀 넘게 안 오면 유일한 복구 수단이 멈춘 것
+                  "Backup Freshness",   # 2026-10-07 (docs/51): 오프사이트 사본이 이틀 넘게 안 오면 유일한 복구 수단이 멈춘 것
+                  "Consumer Lag"}       # 2026-10-23 (docs/54): 컨슈머가 30분 넘게 밀리면 보존 기간을 향해 가는 것
 ESCALATE_AFTER_MIN = 30
 
 
@@ -451,6 +453,38 @@ with DAG(
         execution_timeout=timedelta(minutes=2),
     )
 
+    # ── 컨슈머 그룹 랙 (2026-10-23, docs/54) ────────────────────
+    # 끝단 지연(Ingest Lag·Binance Ingest Lag·Collector Lag)은 "늦다" 를 말하지만 어느 컨슈머가 어느 파티션에서 밀리는지는 말하지 않는다.
+    # collect_metrics.sh 가 5분마다 consumer_lag_5m 에 파티션 단위로 남긴다. Flink 소스는 체크포인트(60초)마다 그룹 오프셋을 커밋하므로
+    # 그룹 랙이 보이긴 하지만 최대 60초분이 톱니로 오르내린다(기준선 docs/54 §1: 호가 최대 1.5만, 체결 0.5만). 그래서 두 조건이다:
+    #   절대 상한 LAG_MAX(10만 = 호가 평균 유입의 약 8분) 를 넘거나, 세 표본 연속 오르면서 톱니 밖(LAG_FLOOR 3만)이면 알림.
+    # 타 프로젝트 그룹(circuit·dim)은 제외. 30분 지속은 CRITICAL_NAMES 승격 규약을 따른다.
+    LAG_MAX, LAG_FLOOR = 100_000, 30_000
+    check_consumer_lag = ClickHouseOperator(
+        task_id="check_consumer_lag",
+        sql=f"""
+            SELECT dateDiff('minute', max(ts_now), now()) AS minutes_since_sample, count() AS groups,
+                   arrayStringConcat(groupArrayIf(concat(consumer_group, '/', topic, ' ', toString(lag_now)), lag_now > {LAG_MAX}), ', ') AS over_max,
+                   arrayStringConcat(groupArrayIf(concat(consumer_group, ' ', arrayStringConcat(arrayMap(x -> toString(x), last3), '>')), rising AND lag_now > {LAG_FLOOR}), ', ') AS rising,
+                   argMax(consumer_group, lag_now) AS worst_group, max(lag_now) AS worst_lag
+            FROM (
+                SELECT consumer_group, topic, max(ts) AS ts_now, argMax(lag, ts) AS lag_now,
+                       arraySlice(arrayMap(x -> x.2, arraySort(x -> x.1, groupArray((ts, lag)))), -3) AS last3,
+                       length(last3) = 3 AND last3[1] < last3[2] AND last3[2] < last3[3] AS rising
+                FROM (
+                    SELECT ts, consumer_group, topic, sum(lag) AS lag
+                    FROM cdc_pipeline.consumer_lag_5m
+                    WHERE ts >= now() - INTERVAL 20 MINUTE
+                      AND (consumer_group LIKE 'flink-%' OR consumer_group LIKE 'clickhouse-%')
+                      AND consumer_group NOT IN ('flink-circuit-connect', 'clickhouse-circuit-connect', 'clickhouse-dim-users', 'clickhouse-dim-leaderboard')
+                    GROUP BY ts, consumer_group, topic
+                )
+                GROUP BY consumer_group, topic
+            )
+        """,
+        result_type="first",
+    )
+
     # ── Binance 체결 적재 (2026-09-20, docs/31): 수집기·잡 어느 쪽이 멈춰도 60초 0행으로 드러난다. 24h 평균 361/s 라 60초 0 은 확실한 이상
     check_binance_ingest = ClickHouseOperator(
         task_id="check_binance_ingest",
@@ -511,6 +545,7 @@ with DAG(
         collector_result = ti.xcom_pull(task_ids="check_collector_lag")
         fresh_result = ti.xcom_pull(task_ids="check_mart_freshness")
         backup_result = ti.xcom_pull(task_ids="check_backup_freshness")
+        conlag_result = ti.xcom_pull(task_ids="check_consumer_lag")
 
         unhealthy = []
 
@@ -527,6 +562,14 @@ with DAG(
                     unhealthy.append({"name": "Backup Volume", "message": f"Oracle /mnt/backup {pct}% (>= 85) - 다음 전체 백업 16GB 가 안 들어간다. 보존 정책(docs/51) 재산정"})
 
         # 파생 표 신선도: 어느 하나라도 2일 넘게 안 갱신되면 dbt 가 멈춘 것이다
+        # 컨슈머 그룹 랙 (2026-10-23, docs/54)
+        if conlag_result is None or conlag_result.get("minutes_since_sample") is None or int(conlag_result["minutes_since_sample"]) > 15:
+            unhealthy.append({"name": "Consumer Lag", "message": f"consumer_lag_5m 표본 없음 ({(conlag_result or {}).get('minutes_since_sample')}분) - collect_metrics.sh cron 또는 kafka-consumer-groups 확인"})
+        elif conlag_result.get("over_max"):
+            unhealthy.append({"name": "Consumer Lag", "message": f"그룹 랙 > {LAG_MAX}: {conlag_result['over_max']} (톱니 최대 1.5만, 기준선 docs/54)"})
+        elif conlag_result.get("rising"):
+            unhealthy.append({"name": "Consumer Lag", "message": f"세 표본 연속 상승(15분) 그리고 > {LAG_FLOOR}: {conlag_result['rising']}"})
+
         if fresh_result:
             stale = {k: int(v) for k, v in fresh_result.items() if v is not None and int(v) > 2}
             if stale:
@@ -755,6 +798,7 @@ with DAG(
             check_mart_freshness,
             check_collector_lag,
             check_backup_freshness,
+            check_consumer_lag,
         ]
         >> evaluate_health
     )

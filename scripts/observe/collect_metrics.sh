@@ -120,3 +120,11 @@ for c in cdc-binance-collector cdc-binance-depth-collector cdc-orderbook-collect
 done
 [ -n "$ROWS" ] && chw "INSERT INTO cdc_pipeline.collector_stats_5m FORMAT CSV
 $ROWS"
+
+# --- 2026-10-23 (docs/54): 컨슈머 그룹 랙을 파티션 단위로. e2e 지연은 "늦다" 만 알려주고 어느 컨슈머·파티션인지는 모른다.
+# --all-groups 한 번이면 그룹마다 docker exec 를 도는 것보다 빠르다. 헤더 줄(TOPIC ...)과 빈 줄은 NF 와 숫자 검사로 거른다.
+TS_NOW=$(date -u +%Y-%m-%d\ %H:%M:%S)
+LAG_ROWS=$(docker exec cdc-kafka-1 kafka-consumer-groups --bootstrap-server kafka-1:29092 --describe --all-groups 2>/dev/null \
+  | awk -v ts="$TS_NOW" 'NF>=6 && $3 ~ /^[0-9]+$/ && $4 ~ /^[0-9-]+$/ && $5 ~ /^[0-9]+$/ {lag=($6 ~ /^[0-9]+$/)?$6:0; cur=($4=="-")?-1:$4; print ts","$1","$2","$3","cur","$5","lag}')
+[ -n "$LAG_ROWS" ] && chw "INSERT INTO cdc_pipeline.consumer_lag_5m FORMAT CSV
+$LAG_ROWS"

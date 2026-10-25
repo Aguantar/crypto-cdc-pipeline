@@ -7,7 +7,7 @@
   ],
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 1,
+  "version": 2,
   "refresh": "10s",
   "time": {
     "from": "now-1h",
@@ -1801,6 +1801,72 @@
               "rawSql": "SELECT stage AS `단계`, count() AS `건수`, uniqExact(title) AS `종류`,\n       toString(max(detected_at)) AS `마지막`\nFROM cdc_pipeline.pipeline_incidents FINAL\nWHERE detected_at >= now() - INTERVAL 7 DAY\nGROUP BY stage ORDER BY count() DESC"
             }
           ]
+        }
+      ]
+    },
+    {
+      "id": 31,
+      "type": "timeseries",
+      "title": "컨슈머 그룹 랙 (5분 표본, docs/54 - 알림 > 10만 또는 15분 연속 상승 > 3만)",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "PDEE91DDB90597936"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 19,
+        "w": 24,
+        "h": 7
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "showPoints": "never"
+          },
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 30000
+              },
+              {
+                "color": "red",
+                "value": 100000
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "PDEE91DDB90597936"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "queryType": "sql",
+          "refId": "A",
+          "rawSql": "-- 2026-10-23 (docs/54): Flink 그룹은 체크포인트(60초)마다 커밋해 톱니가 정상. 평평하게 오르면 컨슈머가 멈춘 것.\nSELECT ts AS time, consumer_group, toFloat64(sum(lag)) AS lag\nFROM cdc_pipeline.consumer_lag_5m\nWHERE $__timeFilter(ts) AND (consumer_group LIKE 'flink-%' OR consumer_group LIKE 'clickhouse-%')\n  AND consumer_group NOT IN ('flink-circuit-connect', 'clickhouse-circuit-connect', 'clickhouse-dim-users', 'clickhouse-dim-leaderboard')\nGROUP BY ts, consumer_group ORDER BY ts"
         }
       ]
     }

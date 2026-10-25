@@ -65,6 +65,7 @@ def test_health_check_dag_structure(dag_bag):
         "check_mart_freshness",   # 2026-09-24 파생 표 신선도 (docs/44)
         "check_collector_lag",    # 2026-09-25 수집기 뒤처짐 (docs/48 §7)
         "check_backup_freshness", # 2026-10-07 오프사이트 백업 도착·용량 (docs/51)
+        "check_consumer_lag",     # 2026-10-23 컨슈머 그룹 랙 (docs/54)
         "evaluate_health",
     }
     actual_tasks = {t.task_id for t in dag.tasks}
@@ -91,6 +92,7 @@ def test_health_check_dag_structure(dag_bag):
         "check_mart_freshness",   # 2026-09-24 파생 표 신선도 (docs/44)
         "check_collector_lag",    # 2026-09-25 수집기 뒤처짐 (docs/48 §7)
         "check_backup_freshness", # 2026-10-07 (docs/51)
+        "check_consumer_lag",     # 2026-10-23 (docs/54)
     }
     # 커버리지 체크는 업비트 REST 풀로 직렬화되어야 한다 (한도 10/s, DAG 간 충돌 방지)
     assert dag.get_task("check_market_coverage").pool == "upbit_rest"
