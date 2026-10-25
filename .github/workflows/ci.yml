@@ -39,6 +39,8 @@ jobs:
         run: |
           airflow db migrate -q 2>/dev/null || airflow db migrate
           python -m pytest airflow/tests/test_dags.py -q
+      - name: onboarding script unit tests (type mapping, DDL snapshot - no docker)
+        run: python -m pytest scripts/ops/tests -q
 
   dbt-parse:
     runs-on: ubuntu-latest

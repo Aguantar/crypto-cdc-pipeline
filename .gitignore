@@ -38,6 +38,7 @@ docs/*
 !docs/48-silent-pipeline-incident.md
 !docs/50-binance-trade-mv.md
 !docs/51-backup-silent-failure.md
+!docs/53-table-onboarding-automation.md
 
 # ── 로컬 전용 문서·이미지 ─────────────────────────────────
 blog-post-*.md
