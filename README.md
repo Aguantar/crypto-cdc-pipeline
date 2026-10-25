@@ -22,16 +22,18 @@
 ## 구조
 
 ```
-[Upbit WS 체결 292마켓] --> producer --> MySQL(이벤트시각 일 파티션)
+[Upbit WS 체결 299마켓] --> producer --> MySQL(이벤트시각 일 파티션)
                                           | binlog
                                           v
                                      Debezium --> Kafka --> Flink --> ClickHouse
                                                              ^
 [Upbit WS 호가] ----------------------------> Kafka ---------+   (원장 없이 직행)
-[Binance WS 체결 502심볼] ------------------> Kafka --> ClickHouse Kafka 엔진 + MV   (Flink 잡에서 옮김)
+[Binance WS 체결 503심볼] ------------------> Kafka --> ClickHouse Kafka 엔진 + MV   (Flink 잡에서 옮김)
 [Binance WS depth 증분] --------------------> Kafka --> Flink 키별 상태로 호가장 재구성
 
 [2층] Binance Testnet 주문 --> MySQL 미러 --> 2번째 Debezium(삭제 보존) --> ClickHouse RMT
+
+Kafka는 브로커 1대(09-17에 3대에서 축소, 결정 참조). 모든 컨슈머 그룹의 랙은 5분마다 ClickHouse에 남기고 헬스체크가 본다.
 ```
 
 체결과 호가의 경로가 다르고 Binance 체결은 Flink를 거치지 않습니다. 이유는 `결정`에 있습니다.
@@ -40,12 +42,12 @@
 
 | | 값 |
 |---|---|
-| 저장 | 9.61억 행, 26.8 GiB, 표 78개. `binance_trades` 6.36억(30일 TTL), `crypto_trades` 1.63억(365일), `orderbook_raw` 1.27억(7일 TTL, Parquet으로 60일 보관) |
-| 유입 | 24시간 평균 약 470 events/s (Binance 체결 243, Upbit 호가 194, Upbit 체결 19, Binance depth 11). 급등 때 2,000을 넘긴 적이 있고 그때의 손실은 `틀렸던 것들` 6번 |
-| 정확성 | Upbit 대조 최근 7일 매일 100% (셀 최소 100%, 0행 셀 0). Binance 대조 99.24~99.999%, 하루 셀 12,100개. 99.24%인 날은 재연결 공백 |
-| 지연 | 거래소 체결에서 ClickHouse까지 p95 (24h): Upbit 4.8초, Binance 3.6초 |
-| 압축 | `orderbook_raw` 14.5:1, `crypto_trades` 4.6:1 |
-| 자원 | 코어 4, RAM 16 GB. ClickHouse 1,346 MB / 62%, Flink TM 900 MB / 12%, Kafka 777 MB, MySQL 671 MB, 스케줄러 426 MB |
+| 저장 | 11.6억 행, 32.6 GiB, 표 79개 (10-25). `binance_trades` 7.76억(30일 TTL), `crypto_trades` 1.84억(365일), `orderbook_raw` 1.29억(7일 TTL, Parquet으로 60일 보관). 30일 TTL 표는 이미 정상 상태라 하루 유입과 삭제가 상쇄되고, 365일 표가 하루 약 0.3 GiB씩 늘어 1년 뒤 약 130 GiB에서 안정화 |
+| 유입 | 24시간 평균 약 500 events/s (Binance 체결 200, Upbit 호가 245, Upbit 체결 44, Binance depth 11. 10-25). 급등 때 2,000을 넘긴 적이 있고 그때의 손실은 `틀렸던 것들` 6번 |
+| 정확성 | Upbit 대조 10-16~10-23 8일 연속 가중 100% (셀 최소 100%, 0행 셀 0). 09-09 시작 이후 45일 중 100% 미만 1일(09-09 67%, docs/13 사고). Binance 대조 10-17~10-24 99.78~99.996%, 하루 셀 12,300개. 99.78%인 날(10-22)은 셀 421개가 99% 미만 |
+| 지연 | 거래소 체결에서 ClickHouse까지 p95 (24h, 10-25): Upbit 4.5초, Binance 3.2초 |
+| 압축 | `orderbook_raw` 14.4:1, `crypto_trades` 4.4:1, `binance_trades` 4.5:1 |
+| 자원 | 코어 4, RAM 16 GB. ClickHouse 1,195 MB / 68%, Flink TM 915 MB / 40%, Kafka 649 MB, MySQL 636 MB, 스케줄러 435 MB (10-25) |
 | 배치 | Airflow DAG 11, dbt 모델 27, 테스트 81, 계약 9, 컬럼 설명 314 |
 | 테스트 | Flink 19, DAG 17, 트레이더 8, dbt 81. CI 3종 |
 
@@ -89,7 +91,7 @@
 
 **계약.** 소비자를 마주하는 모델 9개에 `contract: enforced`, 증분 모델에 `on_schema_change=fail`, 토픽에 JSON 스키마와 자체 시험이 있는 검증기. 계약은 도입 직후 어댑터의 타입 비교 방식 때문에 매일 빌드를 멈췄고, 어댑터를 올려 물리 타입 그대로 강제하게 한 뒤에야 진짜 불일치 한 건이 드러났습니다.
 
-**감시.** 10분 헬스체크 15항목, 매시 품질 판정, 주 1회 다이제스트. 헬스체크에는 파생 표가 이틀 넘게 안 갱신되면, 오프사이트 백업이 이틀 넘게 안 도착하면, 원격 볼륨이 85%를 넘으면 울리는 항목이 있습니다. 같은 이름은 시간당 한 번만 보내고, 유입이 멈추는 종류가 30분 넘게 지속되면 휴대폰 알림을 켠 별도 채널로 승격합니다. 수집기가 5시간 살아 있는 척한 날 일반 채널에 5번 울렸는데 아무도 보지 않았기 때문입니다. 감시자는 다른 기계에 있고 push 방식입니다.
+**감시.** 10분 헬스체크 16항목, 매시 품질 판정, 주 1회 다이제스트. 헬스체크에는 파생 표가 이틀 넘게 안 갱신되면, 오프사이트 백업이 이틀 넘게 안 도착하면, 원격 볼륨이 85%를 넘으면 울리는 항목이 있습니다. 같은 이름은 시간당 한 번만 보내고, 유입이 멈추는 종류가 30분 넘게 지속되면 휴대폰 알림을 켠 별도 채널로 승격합니다. 수집기가 5시간 살아 있는 척한 날 일반 채널에 5번 울렸는데 아무도 보지 않았기 때문입니다. 감시자는 다른 기계에 있고 push 방식입니다.
 
 **메모리 예산.** 서버 한도 1.57 GiB에서 기준선 0.8 GiB와 머지 버스트 0.6 GiB를 빼면 쿼리 몫이 나오고, 전체 이력을 매일 다시 읽는 모델은 거기서 죽습니다. 그런 모델 셋을 이틀 증분으로 바꿨습니다(1.46 GiB가 338 MiB로).
 
@@ -146,7 +148,7 @@
 | `clickhouse/` | 표 DDL, Kafka 엔진과 MV |
 | `dbt_cdc_pipeline/models/` | staging 2, intermediate 7, dimensions 5, marts 2, signals 2, quality 9 |
 | `airflow/dags/`, `airflow/plugins/` | DAG 11개, 커스텀 오퍼레이터와 훅과 콜백 |
-| `scripts/ops/` | 무정지 전환, 재처리, 복원 리허설, 계약 검증기, 외부 감시자 |
+| `scripts/ops/` | 무정지 전환, 재처리, 복원 리허설(네이티브·Parquet, 10-23 Parquet 복원 검증), 테이블 온보딩(`onboard_table.py`, 수동 5단계를 명령 하나로), 계약 검증기, 외부 감시자 |
 | `grafana/` | 대시보드 2개 |
 
 코드를 하나만 본다면 `flink/.../binance/OrderBookReconstructor.java`(상태를 가진 스트리밍 처리)와 `dbt_cdc_pipeline/models/quality/`(값이 맞는지를 매일 세는 부분)입니다.
@@ -178,6 +180,7 @@ scripts/check-health.sh
 
 - [docs/48](docs/48-silent-pipeline-incident.md) 16일간 조용히 멈춰 있던 파이프라인, 그리고 5시간 살아 있는 척한 수집기
 - [docs/51](docs/51-backup-silent-failure.md) 7일간 원격에 가지 않은 백업. 증분 크기 가정, 삼켜진 종료 코드, 가려진 검증
+- [docs/53](docs/53-table-onboarding-automation.md) 새 테이블을 CDC에 태우는 수동 5단계 실측과 자동화. 커넥터에 표를 추가해도 기존 행은 오지 않는다
 - [docs/50](docs/50-binance-trade-mv.md) Flink 잡 하나를 ClickHouse MV로 옮긴 실측
 - [docs/23](docs/23-load-experiment-results.md) 부하 실험 결과
 - [docs/24](docs/24-broker-reduction-design.md) 브로커 3대에서 1대로
@@ -187,6 +190,8 @@ scripts/check-health.sh
 - [docs/32](docs/32-slo-and-alerting.md) SLO와 알럿 체계
 - [docs/35](docs/35-data-inventory.md) 데이터 인벤토리
 - [docs/36](docs/36-metrics.md) 메트릭 정의
+
+번호가 있는 문서는 52까지가 아니라 56까지 있습니다. 공개 저장소에는 위 목록만 올라가 있고, 나머지(복원 리허설 docs/52, 컨슈머 랙 docs/54, 분산 사실표 docs/55 등)는 로컬에 있습니다.
 
 ## 예상 질문
 
