@@ -2,8 +2,8 @@
 
 무엇을 (docs/21 §1·§4):
   1. ClickHouse 네이티브 백업. 최신 전체가 7일 넘게 오래됐으면 전체, 아니면 최신 전체를 base 로 한 증분. 대상 = cdc_pipeline 전체 − BACKUP_EXCLUDE.
-  2. orderbook_raw 의 전날(UTC) 파티션을 Parquet(zstd) 로 내보내 75일 롤링. 원본은 7일 TTL 로 지워지므로 이것이 유일한 장기 보존본.
-  3. rsync 로 Oracle /mnt/backup 에 동기화하고, 원격 보존 정책(Parquet 75일, 전체 2세대, 증분은 최신 전체 이후 3일)을 적용하고,
+  2. orderbook_raw 의 전날(UTC) 파티션을 Parquet(zstd) 로 내보내 60일 롤링(2026-10-07 docs/51 에서 75 → 60). 원본은 7일 TTL 로 지워지므로 이것이 유일한 장기 보존본.
+  3. rsync 로 Oracle /mnt/backup 에 동기화하고, 원격 보존 정책(Parquet 60일, 전체 2세대, 증분은 최신 전체 이후 3일)을 적용하고,
      로컬 스테이징을 원격과 같은 규칙으로 정리한 뒤, dry-run rsync 로 "전송할 것 0" 을 확인한다(검증은 정리가 실패해도 돈다).
 왜 이렇게:
   - 백업은 다른 호스트·다른 디스크에 있어야 백업이다. 미니PC 로컬 사본은 스테이징이고 며칠만 둔다.
@@ -39,7 +39,7 @@ from callbacks.slack_callbacks import task_failure_callback
 # 백업에서 빼는 표와 그 이유 (2026-09-20, docs/34 #10).
 # 원칙: "지금 복구에 쓸 수 있는 유일한 사본인가". 아니면 뺀다. 크기가 기준이 아니다.
 BACKUP_EXCLUDE = {
-    # 호가 원본: 같은 DAG 이 하루치를 Parquet(zstd, 원격 120일)으로 따로 내보낸다. 백업에 또 넣으면 두 배다.
+    # 호가 원본: 같은 DAG 이 하루치를 Parquet(zstd, 원격 60일)으로 따로 내보낸다. 백업에 또 넣으면 두 배다.
     "orderbook_raw",
     # 2026-09-25: 전환 롤백본 넷(crypto_trades_rmt·_v2·*_float_bak)은 이날 전부 DROP 했다(docs/48). 09-20 증분이
     # 8.7GB 가 된 원인이 그 넷이었고, 살아 있는 표만 남았으니 여기 적을 것이 없다.
@@ -176,7 +176,7 @@ with DAG(
         execution_timeout=timedelta(minutes=60),
     )
 
-    # 원격 보존: Parquet 75일, 전체 최근 2세대, 증분은 최신 전체 이후 것 중 최근 3일만. 마지막 줄의 df 는 로그용이고 판정은 health_check 가 한다.
+    # 원격 보존: Parquet 60일(PARQUET_KEEP_DAYS_REMOTE), 전체 최근 2세대, 증분은 최신 전체 이후 것 중 최근 3일만. 마지막 줄의 df 는 로그용이고 판정은 health_check 가 한다.
     apply_remote_retention = BashOperator(
         task_id="apply_remote_retention",
         bash_command=(
