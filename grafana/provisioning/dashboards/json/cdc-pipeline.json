@@ -7,7 +7,7 @@
   ],
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 2,
+  "version": 3,
   "refresh": "10s",
   "time": {
     "from": "now-1h",
@@ -1805,7 +1805,7 @@
       ]
     },
     {
-      "id": 31,
+      "id": 101,
       "type": "timeseries",
       "title": "컨슈머 그룹 랙 (5분 표본, docs/54 - 알림 > 10만 또는 15분 연속 상승 > 3만)",
       "datasource": {
