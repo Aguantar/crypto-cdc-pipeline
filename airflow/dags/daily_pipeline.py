@@ -296,16 +296,23 @@ with DAG(
         # 2026-09-24 (docs/44 §5): FINAL 을 붙였다. crypto_trades 는 09-18 부터 ReplacingMergeTree 라 머지 전 행은
         # 표에 남아 있어도 읽을 때 사라진다(docs/34 #2 의 읽기 규칙). 이 쿼리만 FINAL 이 없어 컷오버 날(09-19 KST)
         # 복사분 160,384건을 "중복 적재" 로 세고 리포트를 막았다. FINAL 로는 0.
-        result = hook.get_scalar(
-            f"""
-            SELECT count() - uniqExact(source_ts, trade_id) AS dup_rows
-            FROM cdc_pipeline.crypto_trades FINAL
-            WHERE upbit_timestamp >= {ms0} AND upbit_timestamp < {ms1}
-            SETTINGS max_memory_usage = 500000000, max_threads = 2
-            """
-        )
-        dup_rows = int(result or 0)
-        context["ti"].log.info("Duplicate rows [%s]: %d", target_date, dup_rows)
+        # 2026-10-26 (포폴 사실 확인 §4-2): 10-24 대상 실행이 하루치 390만 행을 한 번에 FINAL + uniqExact 하다
+        # 쿼리 메모리 한도(476.84 MiB)를 넘어 죽었고 리포트가 안 갔다. 한도를 올리는 대신 시간 단위 24조각으로 나눈다.
+        # 조각 안에서 세어도 같은 답이다 - 키 (source_ts, trade_id) 의 source_ts 가 조각 경계(체결 시각 1시간)를
+        # 넘어 중복될 수 없으므로(같은 체결의 재전송은 같은 체결 시각을 갖는다), 조각별 (count - uniqExact) 의 합 = 하루 전체 값.
+        hour_ms = 3_600_000
+        dup_rows = 0
+        for h0 in range(ms0, ms1, hour_ms):
+            result = hook.get_scalar(
+                f"""
+                SELECT count() - uniqExact(source_ts, trade_id) AS dup_rows
+                FROM cdc_pipeline.crypto_trades FINAL
+                WHERE upbit_timestamp >= {h0} AND upbit_timestamp < {min(h0 + hour_ms, ms1)}
+                SETTINGS max_memory_usage = 400000000, max_threads = 2
+                """
+            )
+            dup_rows += int(result or 0)
+        context["ti"].log.info("Duplicate rows [%s]: %d (24 hourly slices)", target_date, dup_rows)
         return dup_rows
 
     check_duplicates = PythonOperator(
