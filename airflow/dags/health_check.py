@@ -55,7 +55,8 @@ INCIDENT_STAGE = {
 # 상태는 alert_events 에 남긴다(source = health_check_escalation / health_check_recovery). 같은 사건에 한 번만 승격한다.
 CRITICAL_NAMES = {"Binance Ingest", "Producer Activity", "Upbit Producer", "ClickHouse Ingest", "Kafka Health", "Kafka Connect", "Flink Jobs", "Mart Freshness",
                   "Backup Freshness",   # 2026-10-07 (docs/51): 오프사이트 사본이 이틀 넘게 안 오면 유일한 복구 수단이 멈춘 것
-                  "Consumer Lag"}       # 2026-10-23 (docs/54): 컨슈머가 30분 넘게 밀리면 보존 기간을 향해 가는 것
+                  "Consumer Lag",       # 2026-10-23 (docs/54): 컨슈머가 30분 넘게 밀리면 보존 기간을 향해 가는 것
+                  "Backup Volume"}      # 2026-10-30 (docs/57): 85% 알림이 10-28 13:00 부터 30회 일반 채널에만 갔고 다음 날 100% 가 됐다
 ESCALATE_AFTER_MIN = 30
 
 

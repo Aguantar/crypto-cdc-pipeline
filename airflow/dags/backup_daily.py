@@ -54,6 +54,8 @@ REMOTE_ROOT = "/mnt/backup"
 SSH = "ssh -i /opt/airflow/secrets/oci_key -o UserKnownHostsFile=/opt/airflow/secrets/known_hosts -o StrictHostKeyChecking=yes -o ConnectTimeout=15"
 PARQUET_KEEP_DAYS_REMOTE = 60                # 2026-10-08 (docs/51 §8): 75 → 60. 전체 백업이 10-08 에 20.4GB 였고 Binance 30일 TTL 이 차면 약 24GB.
                                              #   2세대 48 + 증분 3일 7 + Parquet 0.85GB × 60일 51 = 106GB = 72%. 75일이면 81% 로 알림선(85%)에 붙는다
+    #   2026-10-30 (docs/57) 재산정: 전체 28GB, 증분 하루 6~7.5GB(머지로 전체에 가까워짐). 동기화 순간 전체 3개 공존을
+    #   free_remote_space 가 없앤다 → 정상 상태 28×2 + 7×3 + 0.85×60 = 128GB(87%) 이라 Parquet 60일은 더 줄여야 할 수 있다(결정 대기)
 PARQUET_KEEP_DAYS_LOCAL = 3
 INCR_KEEP_LOCAL = 3                          # 2026-10-08: 로컬 증분 규칙을 원격과 같게(최신 전체 이후 것 중 최근 3개). 10-07 의 mtime 3일 규칙은
                                              #   원격 보존이 지운 증분을 로컬이 들고 있게 해 전체 백업 날마다 검증(원격 ⊇ 로컬)을 깨뜨렸다 (docs/51 §8)
@@ -165,6 +167,21 @@ with DAG(
     clickhouse_backup = PythonOperator(task_id="clickhouse_backup", python_callable=_clickhouse_backup, execution_timeout=timedelta(minutes=30))
     export_parquet = PythonOperator(task_id="export_orderbook_parquet", python_callable=_export_parquet, execution_timeout=timedelta(minutes=30))
 
+    # 2026-10-30 (docs/57): 동기화 **앞**에서 원격을 비운다. 10-29 주 1회 전체(28GB)가 들어오는 순간 원격에 전체 3개가 공존해
+    # 147GB 를 넘었고, 동기화가 죽자 하류의 정리가 upstream_failed 로 안 돌아 다음 날도 같은 자리에서 막혔다.
+    # "로컬의 전체가 이미 원격에 있다고 치고" 전체 세대만 센다: 들어올 전체가 최신이면 세대 밖의 전체를 먼저 지운다(한 세대분 = 약 28GB 확보).
+    # 옛 전체에 딸린 증분은 여기서 지우지 않는다 - 새 전체가 다 도착하기 전까지는 그 증분이 원격의 최신 복구 시점이라서. apply_remote_retention 이 동기화 뒤에 지운다.
+    free_remote_space = BashOperator(
+        task_id="free_remote_space",
+        bash_command=(
+            f'set -euo pipefail; cd {BACKUP_ROOT}; local_fulls=$(ls -d full_* 2>/dev/null | tr "\\n" " "); '
+            f'{SSH} {REMOTE} \'set -e; cd {REMOTE_ROOT}/clickhouse; '
+            f'union=$( (ls -d full_* 2>/dev/null; echo \'"$local_fulls"\' | tr " " "\\n") | grep . | sort -u); keep=$(echo "$union" | tail -n {FULL_KEEP_REMOTE}); '
+            f'for d in $(ls -d full_* 2>/dev/null); do echo "$keep" | grep -qx "$d" || {{ echo "pre-freed full: $d"; rm -rf "$d"; }}; done; '
+            f'df -h {REMOTE_ROOT} | tail -1\''
+        ),
+    )
+
     # rsync: 새 디렉터리·파일만 전송(-a), 부분 전송 이어받기. --delete 는 쓰지 않는다 - 원격 보존은 아래 정책 태스크가 명시적으로 한다.
     # --chmod=ugo+rX: ClickHouse 가 750 으로 만든 디렉터리를 원격에서 복원 컨테이너(uid 101)가 읽게 (리허설 첫 실패의 원인, docs/21 §1)
     sync_to_oracle = BashOperator(
@@ -219,4 +236,4 @@ with DAG(
     )
 
     # 2026-10-08 (docs/51 §8): 로컬 정리(원격과 같은 규칙) → 검증. 검증은 all_done 이라 정리가 죽어도 돈다
-    [clickhouse_backup, export_parquet] >> sync_to_oracle >> apply_remote_retention >> prune_local >> verify_remote
+    [clickhouse_backup, export_parquet] >> free_remote_space >> sync_to_oracle >> apply_remote_retention >> prune_local >> verify_remote
