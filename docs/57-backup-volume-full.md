@@ -47,7 +47,7 @@ docs/51 §8 은 "전체 16GB × 2세대 + 증분 3일(하루 +1GB) + Parquet 60�
 | 1 | 원격 `full_20261015` 삭제 (보존 정책 2세대, 참조 0) | 완료 10:52 UTC (`free_remote_space` 실행), 100% → 82% |
 | 2 | `sync_to_oracle` 재실행 → full_20261029 완결, incr_20261030, Parquet 10-28·29 | 완료 10:55 UTC, 171초. full_20261029 10,601 파일 |
 | 3 | `apply_remote_retention` 실행 → incr_20261026/27/28 삭제(최신 전체 이전) | 완료 10:55 UTC, 82% → **74% (102G)**. prune_local 도 실행(로컬 full_20261022·incr 3개·Parquet 2일 정리) |
-| 4 | verify 통과, 헬스체크 해제 | verify pending 0 (10:55:57). 헬스체크 해제는 11:00 실행에서 확인 |
+| 4 | verify 통과, 헬스체크 해제 | verify pending 0 (10:55:57). 11:00:18 헬스체크에서 `Backup Freshness`·`Backup Volume` 둘 다 해제, 승격 채널에 해제 카드 2장 |
 | 5 | 코드: 동기화 **앞**에 `free_remote_space`(로컬 전체를 원격에 있다고 치고 세대 밖의 전체만 먼저 삭제, 증분은 동기화 뒤 정리에 남김), `Backup Volume` 을 승격 대상에, 테스트 17 | **완료 10:35 UTC, 커밋 71575b4.** 드라이런(rm→echo): full_20261015 만 대상 |
 
 ## 5. 예산 재산정 (결정 대기)
