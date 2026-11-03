@@ -560,7 +560,7 @@ with DAG(
                 if bk is None or bk > 2 or pq is None or pq > 2:
                     unhealthy.append({"name": "Backup Freshness", "message": f"원격 최신 백업 {backup_result.get('latest_backup') or '없음'} ({bk}일 전), Parquet {backup_result.get('latest_parquet') or '없음'} ({pq}일 전) - backup_daily 의 sync·verify 로그 확인"})
                 if pct is not None and pct >= 85:
-                    unhealthy.append({"name": "Backup Volume", "message": f"Oracle /mnt/backup {pct}% (>= 85) - 다음 전체 백업 16GB 가 안 들어간다. 보존 정책(docs/51) 재산정"})
+                    unhealthy.append({"name": "Backup Volume", "message": f"Oracle /mnt/backup {pct}% (>= 85) - 다음 전체 백업 28GB 가 안 들어간다. 같은 볼륨의 Toss Postgres 포함해 보존 재산정(docs/57 §7)"})
 
         # 파생 표 신선도: 어느 하나라도 2일 넘게 안 갱신되면 dbt 가 멈춘 것이다
         # 컨슈머 그룹 랙 (2026-10-23, docs/54)
