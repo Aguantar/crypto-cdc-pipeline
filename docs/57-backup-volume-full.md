@@ -134,3 +134,27 @@ docs/51 §8 은 "전체 16GB × 2세대 + 증분 3일(하루 +1GB) + Parquet 60�
 예산(체인 뒤, 하루 증분 약 2~3GB 가정 - 4시간 686MB 의 비례): 전체 57 + 증분 6일 약 15 + Parquet 30일 22 + Toss Postgres 10(+0.4/일) + 예약 8 ≈ 112GB (72%), 전체 교체 순간 약 90GB → 61%. 증분 하루 실측은 11-06 부터 쌓인다.
 
 리허설 복원 횟수: 네이티브 4회(09-17, 10-07, 11-04 ×2 체인), Parquet 2회.
+
+## 9. 영향 정정: 같은 볼륨의 Toss 파이프라인이 데이터를 잃었다 (11-04 조사)
+
+§0 의 "데이터 손실 없음" 은 CDC 백업에만 맞는 말이었다. `/mnt/backup` 에는 Toss 프로젝트의 Postgres 데이터 디렉터리가 같이 있고(§7), 볼륨이 100% 인 동안(10-29 01:25 ~ 10-30 10:52 UTC, 약 33시간) 그 Postgres 는 쓰기를 못 했다.
+
+| 시각 UTC | Toss 쪽 사건 | 근거 |
+|---|---|---|
+| 10-29 01:34 | 장중 폴링 `poll_intraday` 가 "could not extend file … No space left on device" 로 실패 시작. 그날 09:00~10:20 KST 9회만 성공, 이후 59회 `InFailedSqlTransaction` | `/mnt/backup/toss/logs/poll.log` 3136행~ |
+| 10-29 11:42 | 마감 순회 `collect_day`: 1분봉 2,390,940 봉을 Parquet 에는 썼고 Postgres COPY 36,032행에서 죽음. 1d 스냅샷·stock_info·부가 정보는 시작도 못 함. run_log 는 `running` 으로 남음 | `collect.log` 793~816행, run_log `2026-10-29-9ea19d92` |
+| 10-29 12:50 | dbt 야간 배치 run 11 모델 ERROR(같은 오류) | Postgres 로그 12:50:05 "could not extend file" |
+| 10-30 00:00~10:50 | 장중 폴링 전부 실패. 10:52 복구 뒤 20:00·20:10 KST 두 번만 성공 → 그날 장중 표 861,000 셀(완결본의 36%) | `poll.log` |
+| 10-30 11:30~12:42 | 마감 순회 정상(복구 뒤) | run_log ok |
+| 10-27 ~ | 별건: `assert_profile_matches_symbol_attr` 가 10-27 부터 실패. 20:30 스냅샷의 거래정지 플래그(krx·nxt 둘 다 true)가 켜진 날 봉이 720 전부 있고 전후 날은 false - 플래그는 조회 시각의 상태라 그날 봉 수를 설명하지 못한다(126340 10-19·10-21, 001940·104700 10-30, 10-30 은 4,307 중 122 종목 플래그) | `dim_symbol_day_profile`, `stock_info_snapshot` payload |
+
+조치(11-04 05:30 ~ 06:30 UTC):
+| # | 조치 | 결과 |
+|---|---|---|
+| 1 | `scripts/replay_parquet.py` 신설: Parquet 정본 → Postgres 적재본 재생성(pg_replace 재사용, sweep_manifest 는 봉에서 파생 status='replayed') | 10-29 1분봉 2,390,940행·4,305 종목 55초. "Parquet 이 정본" 설계가 처음 실전에 쓰임 |
+| 2 | run_log 10-29 `running` → `error` 에 원인 기입 | |
+| 3 | dbt seed `known_data_gaps`(10-29·10-30 intraday, 10-29 same_day_attr) + `assert_intraday_equals_final` 이 알려진 공백을 제외 | 공백을 숨기는 게 아니라 "알려진 사고" 와 "새 문제" 를 가르기 위해 |
+| 4 | `assert_profile_matches_symbol_attr` 는 거래정지 플래그 날을 제외(플래그 의미가 당일 봉 수와 무관함을 실측으로 확인) | |
+| 5 | 되살릴 수 없는 것: 10-29 1d 스냅샷·stock_info·부가(as-of), 10-29 10:30 이후·10-30 장중 폴링 | 기록만 |
+
+교훈 추가: 5. 볼륨을 나눠 쓰면 한쪽의 가득 참이 다른 쪽의 쓰기 실패가 된다. 백업 볼륨에 라이브 DB 를 올린 것이 설계 오류였고, 예산에도 없었다.
