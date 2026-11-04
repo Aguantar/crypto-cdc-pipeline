@@ -3,7 +3,7 @@
 무엇을 (docs/21 §1·§4):
   1. ClickHouse 네이티브 백업. 최신 전체가 7일 넘게 오래됐으면 전체, 아니면 최신 전체를 base 로 한 증분. 대상 = cdc_pipeline 전체 − BACKUP_EXCLUDE.
   2. orderbook_raw 의 전날(UTC) 파티션을 Parquet(zstd) 로 내보내 30일 롤링(10-07 75 → 60, 10-30 60 → 45, 11-03 45 → 30). 원본은 7일 TTL 로 지워지므로 이것이 유일한 장기 보존본.
-  3. rsync 로 Oracle /mnt/backup 에 동기화하고, 원격 보존 정책(Parquet 30일, 전체 2세대, 증분은 최신 전체 이후 2일)을 적용하고,
+  3. rsync 로 Oracle /mnt/backup 에 동기화하고, 원격 보존 정책(Parquet 30일, 전체 2세대, 증분은 최신 전체 이후 전부 - 체인)을 적용하고,
      로컬 스테이징을 원격과 같은 규칙으로 정리한 뒤, dry-run rsync 로 "전송할 것 0" 을 확인한다(검증은 정리가 실패해도 돈다).
 왜 이렇게:
   - 백업은 다른 호스트·다른 디스크에 있어야 백업이다. 미니PC 로컬 사본은 스테이징이고 며칠만 둔다.
@@ -59,9 +59,8 @@ PARQUET_KEEP_DAYS_REMOTE = 30                # 2026-11-03 (docs/57 §7): 45 → 
     #   2026-10-30 (docs/57) 재산정: 전체 28GB, 증분 하루 6~7.5GB(머지로 전체에 가까워짐). 동기화 순간 전체 3개 공존을
     #   free_remote_space 가 없앤다 → 정상 상태 28×2 + 7×3 + 0.85×60 = 128GB(87%) 이라 Parquet 60일은 더 줄여야 할 수 있다(결정 대기)
 PARQUET_KEEP_DAYS_LOCAL = 3
-INCR_KEEP_LOCAL = 2                          # 2026-11-03: 원격과 같게 2. 2026-10-08: 로컬 증분 규칙을 원격과 같게(최신 전체 이후 것 중 최근 3개). 10-07 의 mtime 3일 규칙은
+# 2026-11-04 (docs/57 §8): 증분 체인 - 최신 전체 이후 증분은 전부 보존(복원이 체인을 읽는다). 종전 상수 INCR_KEEP_LOCAL·INCR_KEEP_DAYS_REMOTE 삭제.
                                              #   원격 보존이 지운 증분을 로컬이 들고 있게 해 전체 백업 날마다 검증(원격 ⊇ 로컬)을 깨뜨렸다 (docs/51 §8)
-INCR_KEEP_DAYS_REMOTE = 2                    # 2026-11-03 (docs/57 §7): 3 → 2. 증분이 하루 9~10GB 로 자라 3일이면 28GB. 최신 전체 이후 것만, 그중 최근 2일
 FULL_KEEP_REMOTE = 2                         # 2026-10-07: 3 → 2. 주 1회 전체이므로 2세대 = 약 2주
 FULL_EVERY_DAYS = 7                          # 2026-10-07: 월 1회 → 7일마다. 최신 전체가 이보다 오래되면 전체
 
@@ -90,17 +89,28 @@ def _latest_full() -> str | None:
     return fulls[-1] if fulls else None
 
 
+def _latest_backup_since(full: str) -> str:
+    """체인 증분의 base: 최신 전체 이후의 가장 최근 백업(증분이면 증분). 2026-11-04 (docs/57 §8).
+    왜 체인인가: base 를 늘 최신 전체로 두면 증분이 "전체 이후 바뀐 파트 전부" 라 머지가 파트를 다시 쓸수록 전체에 가까워진다
+    (10-29 전체 뒤 6.2 → 12GB). 직전 증분을 base 로 두면 "그날 바뀐 파트" 만 담는다(실측 4시간분 686MB).
+    복원은 체인을 전부 읽으므로 최신 전체 이후 증분은 하나도 지우면 안 된다(정리 규칙이 그렇게 바뀌었다)."""
+    tag = full[5:]
+    cands = sorted(d for d in os.listdir(BACKUP_ROOT) if (d.startswith("incr_") or d.startswith("full_"))
+                   and os.path.isdir(os.path.join(BACKUP_ROOT, d)) and d[5:] >= tag)
+    return cands[-1]
+
+
 def _clickhouse_backup(**context) -> dict:
     run_day = context["data_interval_end"]          # 실행일 = 백업 시점
     tag = run_day.strftime("%Y%m%d")
-    base = _latest_full()
-    base_age_days = (run_day.date() - datetime.strptime(base[5:], "%Y%m%d").date()).days if base else None
+    full = _latest_full()
+    full_age_days = (run_day.date() - datetime.strptime(full[5:], "%Y%m%d").date()).days if full else None
     # 2026-10-07 (docs/51): 달력(매월 1일)이 아니라 최신 전체의 나이로 정한다. 하루 실패해도 다음 날 전체가 만들어진다.
-    if base is None or base_age_days >= FULL_EVERY_DAYS:
-        name = f"full_{tag}"
+    if full is None or full_age_days >= FULL_EVERY_DAYS:
+        name = f"full_{tag}"; base = None
         sql = f"BACKUP DATABASE cdc_pipeline EXCEPT TABLES {_except()} TO File('{BACKUP_ROOT}/{name}')"
     else:
-        name = f"incr_{tag}"
+        name = f"incr_{tag}"; base = _latest_backup_since(full)
         sql = f"BACKUP DATABASE cdc_pipeline EXCEPT TABLES {_except()} TO File('{BACKUP_ROOT}/{name}') SETTINGS base_backup = File('{BACKUP_ROOT}/{base}')"
     if os.path.isdir(os.path.join(BACKUP_ROOT, name)):
         context["ti"].log.info("backup %s already exists - idempotent skip", name)
@@ -109,7 +119,7 @@ def _clickhouse_backup(**context) -> dict:
         context["ti"].log.info("BACKUP → %s", out)
     size = subprocess.run(["du", "-sb", os.path.join(BACKUP_ROOT, name)], capture_output=True, text=True).stdout.split()[0]
     status = _ch_exec(f"SELECT status, num_files, formatReadableSize(total_size) FROM system.backups WHERE name = 'File(\\'{BACKUP_ROOT}/{name}\\')' ORDER BY start_time DESC LIMIT 1 FORMAT TSV")
-    result = {"name": name, "base": base if name.startswith("incr_") else None, "bytes": int(size), "status": status}
+    result = {"name": name, "base": base, "bytes": int(size), "status": status}
     context["ti"].log.info("clickhouse backup: %s", result)
     return result
 
@@ -195,7 +205,7 @@ with DAG(
         execution_timeout=timedelta(minutes=60),
     )
 
-    # 원격 보존: Parquet 60일(PARQUET_KEEP_DAYS_REMOTE), 전체 최근 2세대, 증분은 최신 전체 이후 것 중 최근 3일만. 마지막 줄의 df 는 로그용이고 판정은 health_check 가 한다.
+    # 원격 보존: Parquet 30일(PARQUET_KEEP_DAYS_REMOTE), 전체 최근 2세대, 증분은 최신 전체 이후 전부(체인, 2026-11-04). 마지막 줄의 df 는 로그용이고 판정은 health_check 가 한다.
     apply_remote_retention = BashOperator(
         task_id="apply_remote_retention",
         bash_command=(
@@ -205,12 +215,11 @@ with DAG(
             f'for d in $fulls; do echo "$keep" | grep -qx "$d" || {{ echo "pruned full: $d"; rm -rf "$d"; }}; done; '
             f'latest=$(echo "$keep" | tail -n 1 | sed "s/full_//"); '
             f'for d in $(ls -d incr_* 2>/dev/null); do t=${{d#incr_}}; [ "$t" -lt "$latest" ] && {{ echo "pruned incr (older than latest full): $d"; rm -rf "$d"; }}; done; '
-            f'for d in $(ls -d incr_* 2>/dev/null | sort | head -n -{INCR_KEEP_DAYS_REMOTE}); do echo "pruned incr (keep {INCR_KEEP_DAYS_REMOTE}): $d"; rm -rf "$d"; done; '
             f'df -h {REMOTE_ROOT} | tail -1; du -sh {REMOTE_ROOT}/clickhouse\''
         ),
     )
 
-    # 로컬(스테이징) 보존: Parquet 3일, 증분 3일, 전체는 최신 1개만 (base 로 필요).
+    # 로컬(스테이징) 보존: Parquet 3일, 증분은 최신 전체 이후 전부(체인의 base 로 필요), 전체는 최신 1개만.
     # ClickHouse(uid 101)가 750 으로 만드는 디렉터리를 Airflow(50000, 보조그룹 101)가 지우려면 그룹 쓰기가 필요하다.
     # 2026-10-07 (docs/51): 이 권한이 없어 prune 이 한 번도 성공한 적이 없었다. 호스트 cron 01:30 UTC 가 ClickHouse 컨테이너 root 로
     # `chmod -R g+w /backups` 를 한다(땜질. 맞는 방향은 ClickHouse 가 오브젝트 스토리지로 직접 백업하고 수명주기 정책이 지우는 것).
@@ -222,7 +231,6 @@ with DAG(
             f'fulls=$(ls -d full_* | sort); for d in $(echo "$fulls" | head -n -1); do echo "pruned local full: $d"; rm -rf "$d"; done; '
             f'latest=$(echo "$fulls" | tail -n 1 | sed "s/full_//"); '
             f'for d in $(ls -d incr_* 2>/dev/null); do t=${{d#incr_}}; [ "$t" -lt "$latest" ] && {{ echo "pruned local incr (older than latest full): $d"; rm -rf "$d"; }}; done; '
-            f'for d in $(ls -d incr_* 2>/dev/null | sort | head -n -{INCR_KEEP_LOCAL}); do echo "pruned local incr (keep {INCR_KEEP_LOCAL}): $d"; rm -rf "$d"; done; '
             f'du -sh {BACKUP_ROOT}'
         ),
     )
