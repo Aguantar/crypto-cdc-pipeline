@@ -33,6 +33,7 @@ HEARTBEAT  = os.path.join(DIR, "heartbeat.json")
 STATE      = os.path.join(DIR, "state.json")
 DOWN_SEC   = int(os.environ.get("WD_DOWN_SEC", "720"))    # 12분 = push 주기 5분의 2회 누락 + 여유
 REPEAT_SEC = int(os.environ.get("WD_REPEAT_SEC", "3600")) # 같은 상태면 1시간마다만 재알림
+CANARY_SEC = int(os.environ.get("WD_CANARY_SEC", "93600")) # 26시간 = 알림 카나리(매일 07:10 UTC) 1회 누락 + 여유. 11-25 docs/06
 GRAFANA    = os.environ.get("WD_GRAFANA", "")
 
 RANK = {"ok": 0, "stale": 1, "degraded": 2, "down": 3, "watchdog_error": 4}
@@ -74,6 +75,12 @@ def judge(path=None):
         return "degraded", f"호스트는 살아있으나 ClickHouse 를 못 읽음: {hb.get('detail','')}", hb
     if hb.get("verdict") == "stale":
         return "stale", "최근 5분 체결 적재 0건 (수집·CDC·Flink 경로 점검 필요)", hb
+    # 11-25 (v2 docs/06): 알림 경로 카나리. Airflow alert_canary 가 Slack 2xx 를 받은 시각을 heartbeat 가 실어 온다.
+    # 없거나 26시간 넘게 갱신이 없으면 "알림을 보내는 코드가 죽었다" — 11-24 KeyError 로 critical 7건이 조용히 사라진 사고의 재발 감지.
+    if "alert_canary_epoch" in hb or hb.get("schema", 1) >= 3:
+        cage = int(time.time() - hb.get("alert_canary_epoch", 0))
+        if cage > CANARY_SEC:
+            return "degraded", f"알림 경로 카나리가 {cage//3600}시간째 갱신되지 않음 (한계 {CANARY_SEC//3600}시간) — Airflow alert_canary·Slack 발송 경로 점검", hb
     # 거래소 시장경보는 여기서 보지 않는다. 장애가 아니라 시장 맥락이고, 일일 리포트가 요약한다
     return "ok", "", hb
 
@@ -120,6 +127,13 @@ def self_test():
                                    "recent_trades_5m": 6000, "anomaly_count_5m": 2,
                                    "alert_details": ["투자주의 지정 KRW-XYZ"]},                          "ok"),
         ("반쪽 파일",              "{not json",                                                          "watchdog_error"),
+        # 11-25: 알림 경로 카나리
+        ("카나리 신선",            {"clickhouse": "ok", "verdict": "ok", "sent_at_epoch": now, "recent_trades_5m": 6000,
+                                   "alert_canary_epoch": now - 3600},                                     "ok"),
+        ("카나리 27시간 침묵",     {"clickhouse": "ok", "verdict": "ok", "sent_at_epoch": now, "recent_trades_5m": 6000,
+                                   "alert_canary_epoch": now - 27 * 3600},                                "degraded"),
+        ("카나리 필드 없음(schema 3)", {"schema": 3, "clickhouse": "ok", "verdict": "ok", "sent_at_epoch": now,
+                                   "recent_trades_5m": 6000},                                             "degraded"),
     ]
     with tempfile.TemporaryDirectory() as d:
         for name, hb, want in cases:
